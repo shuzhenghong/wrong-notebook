@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { getAppConfig, getActiveOpenAIConfig } from '@/lib/config';
+import { getCurrentUser } from '@/lib/server-auth';
+import { badRequest } from '@/lib/api-errors';
+import { validateBaseUrl } from '@/lib/ssrf';
 
 const logger = createLogger('api:ai:models');
 
@@ -9,9 +13,7 @@ interface ModelInfo {
     owned_by?: string;
 }
 
-// 从模型 ID 中提取短名称
 function extractModelName(modelId: string): string {
-    // models/gemini-2.0-flash -> gemini-2.0-flash
     return modelId.replace(/^models\//, '');
 }
 
@@ -66,28 +68,56 @@ async function fetchOpenAIModels(apiKey: string, baseUrl: string): Promise<Model
 }
 
 export async function GET(req: NextRequest) {
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+
+    // 防御：绝对不能接受 URL query 里的 apiKey/baseUrl（SSRF + 密钥落日志）
+    const { searchParams } = new URL(req.url);
+    if (searchParams.has('apiKey') || searchParams.has('baseUrl')) {
+        logger.warn({ path: req.nextUrl.pathname }, 'Rejected models fetch with apiKey/baseUrl in query');
+        return badRequest('apiKey and baseUrl must be configured in settings, not passed via URL');
+    }
+
     try {
-        const { searchParams } = new URL(req.url);
         const provider = searchParams.get('provider');
-        const apiKey = searchParams.get('apiKey');
-        const baseUrl = searchParams.get('baseUrl');
+        const config = getAppConfig();
+
+        let apiKey: string | undefined;
+        let baseUrl: string | undefined;
+
+        if (provider === 'gemini') {
+            apiKey = config.gemini?.apiKey;
+            baseUrl = config.gemini?.baseUrl || 'https://generativelanguage.googleapis.com';
+        } else if (provider === 'openai') {
+            const active = getActiveOpenAIConfig();
+            apiKey = active?.apiKey;
+            baseUrl = active?.baseUrl || 'https://api.openai.com/v1';
+        } else if (provider === 'azure') {
+            apiKey = config.azure?.apiKey;
+            baseUrl = config.azure?.endpoint;
+        } else {
+            return badRequest('provider must be one of: gemini, openai, azure');
+        }
 
         if (!apiKey) {
-            return NextResponse.json(
-                { error: 'API key is required' },
-                { status: 400 }
-            );
+            return badRequest('No API key configured for this provider');
+        }
+
+        // SSRF 最后一道闸门（理论上 settings POST 已校验，但防御式编程）
+        if (baseUrl) {
+            const vr = validateBaseUrl(baseUrl);
+            if (!vr.ok) {
+                logger.warn({ baseUrl }, 'Configured baseUrl failed SSRF validation');
+                return badRequest('Configured baseUrl rejected: ' + vr.reason);
+            }
         }
 
         let models: ModelInfo[] = [];
 
         if (provider === 'gemini') {
-            const effectiveBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com';
-            models = await fetchGeminiModels(apiKey, effectiveBaseUrl);
+            models = await fetchGeminiModels(apiKey, baseUrl!);
         } else {
-            // OpenAI-compatible
-            const effectiveBaseUrl = baseUrl || 'https://api.openai.com/v1';
-            models = await fetchOpenAIModels(apiKey, effectiveBaseUrl);
+            models = await fetchOpenAIModels(apiKey, baseUrl!);
         }
 
         return NextResponse.json({ models });
@@ -96,7 +126,7 @@ export async function GET(req: NextRequest) {
         logger.error({ error }, 'Error fetching models');
         return NextResponse.json(
             { error: error.message || 'Internal server error', models: [] },
-            { status: 200 } // Return 200 with empty models to allow manual input
+            { status: 200 }
         );
     }
 }

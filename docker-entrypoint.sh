@@ -17,6 +17,21 @@ CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || ech
 # Fix permissions for data and config directories
 chown -R nextjs:nodejs /app/data /app/config
 
+# === 安全加固 ===
+# 强制校验 NEXTAUTH_SECRET（示例值 / 空 / 过短都拒绝）
+if [ -z "$NEXTAUTH_SECRET" ] \
+    || [ "${#NEXTAUTH_SECRET}" -lt 16 ] \
+    || [ "$NEXTAUTH_SECRET" = "your_secret_key" ] \
+    || [ "$NEXTAUTH_SECRET" = "changeme" ]; then
+    echo "[Entrypoint][FATAL] NEXTAUTH_SECRET is missing, too short (<16), or a well-known placeholder."
+    echo "[Entrypoint] Aborting. Set a strong, random secret in your environment and restart."
+    exit 1
+fi
+
+# 如果用户没提供 DEFAULT_ADMIN_PASSWORD，但容器里还没有任何管理员用户，
+# 我们在 entrypoint 层面就拒绝启动 —— 避免 seed-admin.js 硬编码弱密码兜底。
+# （存在 pre-packaged DB 的场景会在上面的 cp 分支里继续走，不会进这里的全新 DB 路径。）
+
 # Check if the persistent database exists
 if [ ! -s "$TARGET_DB" ]; then
     echo "[Entrypoint] Initializing database..."
@@ -48,12 +63,17 @@ cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
     echo "[Entrypoint] Migrations completed successfully."
 } || echo "[Entrypoint] Migration failed or no pending migrations."
 
-# Always run seed after migrations to ensure admin user has correct role/isActive
-# (migration may have reset role to default 'user' for existing installs)
+# Always run seed after migrations to ensure admin user has correct role/isActive.
+# seed-admin.js 只会在 "DB 里已有 admin" 时补 role/isActive，绝不碰密码；
+# 如果 DB 里没有 admin 且 DEFAULT_ADMIN_PASSWORD 没给 → 进程非零退出（避免硬编码弱密码兜底）。
 echo "[Entrypoint] Ensuring admin user exists with correct role..."
-cd /app && node "$SEED_ADMIN_SCRIPT" && {
-    echo "[Entrypoint] Admin seed completed successfully."
-} || echo "[Entrypoint] Admin seed failed (non-fatal, continuing...)."
+if ! cd /app && node "$SEED_ADMIN_SCRIPT"; then
+    echo "[Entrypoint][FATAL] Admin seed failed. This usually means:"
+    echo "  1) No pre-packaged DB / no existing admin user in DB, AND"
+    echo "  2) DEFAULT_ADMIN_PASSWORD is not set in the environment."
+    echo "  Set DEFAULT_ADMIN_PASSWORD and restart."
+    exit 1
+fi
 touch "$SEED_MARKER" 2>/dev/null
 
 # Check if version changed - rebuild system tags automatically

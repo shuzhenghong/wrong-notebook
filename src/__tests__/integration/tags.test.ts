@@ -37,6 +37,14 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 所有 API route 现在都通过它校验
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: { id: 'user-1', email: 'user@example.com', role: 'admin', isActive: true },
+    }),
+}));
+
 // Import after mocks
 import { GET as GET_STATS } from '@/app/api/tags/stats/route';
 import { GET as GET_SUGGESTIONS } from '@/app/api/tags/suggestions/route';

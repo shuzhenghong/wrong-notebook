@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { getCurrentUser } from '@/lib/server-auth';
+import { badRequest } from '@/lib/api-errors';
 
 const logger = createLogger('frontend-logs');
 
 export const runtime = 'nodejs';
+
+// 单条日志最大长度 / 批量条数 — 防止日志投毒
+const MAX_LOG_ENTRIES = 50;
+const MAX_MESSAGE_LENGTH = 2000;
+const MAX_CONTEXT_KEYS = 20;
 
 interface FrontendLogEntry {
   level: 'info' | 'warn' | 'error';
@@ -22,47 +29,67 @@ interface BatchLogRequest {
 /**
  * POST /api/logs/frontend
  *
- * Receives frontend logs and writes them to backend logger
- * Supports both single log and batch log formats.
+ * 接收前端日志并写入后端 logger。
+ * - 必须登录（防止匿名日志投毒）
+ * - 单条上限 2KB / 批量最多 50 条
  */
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
-    // 支持批量日志格式 { logs: [...] } 和单条日志格式
-    const logs: FrontendLogEntry[] = Array.isArray(body.logs) ? body.logs : [body];
+    try {
+        const body = await request.json();
 
-    for (const entry of logs) {
-      const { level, prefix, message, context = {}, timestamp, url, userAgent } = entry;
+        const rawLogs: FrontendLogEntry[] = Array.isArray((body as BatchLogRequest).logs)
+            ? (body as BatchLogRequest).logs
+            : [body as FrontendLogEntry];
 
-      // Build log context
-      const logContext = {
-        source: 'frontend',
-        prefix,
-        url: url || request.headers.get('referer'),
-        userAgent: userAgent || request.headers.get('user-agent'),
-        clientTime: timestamp,
-        ...context,
-      };
+        if (rawLogs.length > MAX_LOG_ENTRIES) {
+            return badRequest(`Too many logs in one batch (max ${MAX_LOG_ENTRIES})`);
+        }
 
-      // Log to backend using appropriate level
-      switch (level) {
-        case 'error':
-          logger.error(logContext, message);
-          break;
-        case 'warn':
-          logger.warn(logContext, message);
-          break;
-        case 'info':
-        default:
-          logger.info(logContext, message);
-          break;
-      }
+        let accepted = 0;
+
+        for (const entry of rawLogs) {
+            if (!entry || typeof entry.message !== 'string') continue;
+
+            const trimmed = entry.message.slice(0, MAX_MESSAGE_LENGTH);
+            const safeContext: Record<string, unknown> = {};
+            const ctxObj = entry.context || {};
+            let keys = 0;
+            for (const [k, v] of Object.entries(ctxObj)) {
+                if (keys >= MAX_CONTEXT_KEYS) break;
+                safeContext[k] = typeof v === 'string' ? v.slice(0, 200) : v;
+                keys++;
+            }
+
+            const logContext = {
+                source: 'frontend',
+                userId: auth.user.id,
+                prefix: entry.prefix,
+                url: entry.url || request.headers.get('referer'),
+                clientTime: entry.timestamp,
+                ...safeContext,
+            };
+
+            switch (entry.level) {
+                case 'error':
+                    logger.error(logContext, trimmed);
+                    break;
+                case 'warn':
+                    logger.warn(logContext, trimmed);
+                    break;
+                case 'info':
+                default:
+                    logger.info(logContext, trimmed);
+                    break;
+            }
+            accepted++;
+        }
+
+        return NextResponse.json({ success: true, count: accepted });
+    } catch (error) {
+        logger.error({ error }, 'Failed to process frontend log');
+        return NextResponse.json({ success: false }, { status: 500 });
     }
-
-    return NextResponse.json({ success: true, count: logs.length });
-  } catch (error) {
-    logger.error({ error }, 'Failed to process frontend log');
-    return NextResponse.json({ success: false }, { status: 500 });
-  }
 }

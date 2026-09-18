@@ -259,12 +259,24 @@ export async function POST(req: Request) {
             });
 
             if (!user) {
-                logger.warn({ username }, 'User not found');
+                // 故意返回 401 而不是 404 —— 防止用户名枚举
+                logger.warn({ username }, 'Authentication failed (user not found or bad password)');
                 return createErrorResponse(
-                    '用户不存在',
-                    404,
-                    ErrorCode.USER_NOT_FOUND,
-                    'User not found'
+                    '用户名或密码错误',
+                    401,
+                    ErrorCode.UNAUTHORIZED,
+                    'Invalid username or password'
+                );
+            }
+
+            // 账号被禁用
+            if (!user.isActive) {
+                logger.warn({ username }, 'Authentication failed (account disabled)');
+                return createErrorResponse(
+                    '账号已被禁用',
+                    401,
+                    ErrorCode.UNAUTHORIZED,
+                    'Account is disabled'
                 );
             }
 
@@ -273,10 +285,10 @@ export async function POST(req: Request) {
             if (!isPasswordValid) {
                 logger.warn({ username }, 'Invalid password');
                 return createErrorResponse(
-                    '密码错误',
+                    '用户名或密码错误',
                     401,
                     ErrorCode.UNAUTHORIZED,
-                    'Invalid password'
+                    'Invalid username or password'
                 );
             }
 

@@ -1,6 +1,41 @@
-
 export async function register() {
     if (process.env.NEXT_RUNTIME === 'nodejs') {
+        // 安全校验：NEXTAUTH_SECRET 必须存在且非示例值，否则整个认证体系形同虚设
+        const secret = process.env.NEXTAUTH_SECRET;
+        const INSECURE_VALUES = new Set([
+            '',
+            'your_secret_key',
+            'your-secret-key',
+            'changeme',
+            'your_secret_key_here',
+            'example-secret',
+            'test-secret',
+        ]);
+
+        if (!secret || INSECURE_VALUES.has(secret.trim().toLowerCase()) || secret.length < 16) {
+            // 允许本地开发 / 测试环境自动生成一个随机值，避免本地跑起来就报错
+            const isDev = process.env.NODE_ENV !== 'production';
+            const isTest = process.env.VITEST === 'true';
+            if (isDev || isTest) {
+                const crypto = await import('crypto');
+                const generated = crypto.randomBytes(32).toString('hex');
+                process.env.NEXTAUTH_SECRET = generated;
+                // eslint-disable-next-line no-console
+                console.warn(
+                    '[security] NEXTAUTH_SECRET missing or insecure — generated a random one for this process. ' +
+                    'Set a strong NEXTAUTH_SECRET in .env / docker-compose for production.'
+                );
+            } else {
+                // 生产环境：直接拒绝启动
+                // eslint-disable-next-line no-console
+                console.error(
+                    '\n[security] FATAL: NEXTAUTH_SECRET is missing, too short, or is a well-known placeholder. ' +
+                    'Aborting startup. Set a long random secret in your environment.\n'
+                );
+                process.exit(1);
+            }
+        }
+
         const { setupGlobalProxy } = await import('./lib/global-proxy');
         setupGlobalProxy();
     }

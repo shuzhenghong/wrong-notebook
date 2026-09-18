@@ -9,12 +9,16 @@
  * - Pretty formatted output with colors (development)
  * - Configurable log levels via LOG_LEVEL env var
  * - Module-based child loggers
+ * - 生产环境敏感字段自动脱敏（apiKey/password/secret/token 等）
  *
  * Usage:
  *   logger.info({ userId: 123 }, 'User logged in');
  *   logger.error({ error }, 'Failed to process request');
  *   logger.debug({ data }, 'Debug information');
  */
+
+// 延迟加载，避免循环依赖（secrets 是普通工具模块，logger 自身不能在静态初始化里依赖它）
+import { maskSensitiveFields } from './secrets';
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -183,13 +187,13 @@ function createLogFunction(level: LogLevel, baseContext: LogContext = {}): (ctx:
       }
     } else {
       // JSON output for production
-      const logEntry = {
+      const logEntry = maskSensitiveFields({
         level,
         time: timestamp.toISOString(),
         ...baseContext,
         ...context,
         msg: message,
-      };
+      });
 
       const output = JSON.stringify(logEntry);
 

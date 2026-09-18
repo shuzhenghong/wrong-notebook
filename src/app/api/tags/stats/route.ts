@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createLogger } from "@/lib/logger";
+import { internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 
 const logger = createLogger('api:tags:stats');
 
@@ -9,12 +11,16 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/tags/stats
- * 获取标签使用频率统计
+ * 获取当前用户错题的标签使用频率统计（跨租户隔离）
  */
 export async function GET(req: Request) {
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+
     try {
-        // 获取所有错题的知识点
+        // 只查当前用户的错题 — 防止跨租户泄露
         const errorItems = await prisma.errorItem.findMany({
+            where: { userId: auth.user.id },
             select: {
                 knowledgePoints: true,
             },
@@ -52,9 +58,6 @@ export async function GET(req: Request) {
         });
     } catch (error) {
         logger.error({ error }, 'Error getting tag stats');
-        return NextResponse.json(
-            { message: "Failed to get tag statistics" },
-            { status: 500 }
-        );
+        return internalError("Failed to get tag statistics");
     }
 }
