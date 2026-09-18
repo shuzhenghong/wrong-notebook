@@ -99,6 +99,7 @@ export interface UpdateUserProfileRequest {
     educationStage?: string;
     enrollmentYear?: number;
     password?: string;
+    currentPassword?: string; // 修改密码时必填（首次强制改密流程除外）
 }
 
 export interface OpenAIInstance {

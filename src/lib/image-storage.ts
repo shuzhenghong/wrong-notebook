@@ -59,6 +59,25 @@ function extensionFor(mimeType: string): string {
     return map[mimeType.toLowerCase()] || 'img';
 }
 
+/**
+ * 按文件头（magic bytes）核实解码结果确实是常见图片格式。
+ * 防止把 HTML/脚本等伪装成图片落盘（读取端虽有 nosniff + image/* 兜底，纵深防御）。
+ */
+function looksLikeRealImage(buffer: Buffer): boolean {
+    if (buffer.length < 12) return false;
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return true;
+    // GIF87a / GIF89a
+    if (buffer.toString('ascii', 0, 3) === 'GIF') return true;
+    // BMP: 42 4D
+    if (buffer[0] === 0x42 && buffer[1] === 0x4d) return true;
+    // WEBP: RIFF....WEBP
+    if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return true;
+    return false;
+}
+
 export interface StoredImage {
     storageKey: string;
     url: string;
@@ -73,6 +92,12 @@ export interface StoredImage {
 export function storeImage(userId: string, errorItemId: string, input: string): StoredImage | null {
     const decoded = decodeImage(input);
     if (!decoded || decoded.buffer.length === 0) return null;
+
+    // 文件头校验：非真实图片格式直接拒绝（返回 null 后由调用方决定回退策略）
+    if (!looksLikeRealImage(decoded.buffer)) {
+        logger.warn({ userId, mimeType: decoded.mimeType }, 'Rejected non-image payload by magic-byte check');
+        return null;
+    }
 
     const storageKey = `${userId}/${errorItemId}.${extensionFor(decoded.mimeType)}`;
     const target = path.join(getImagesRoot(), storageKey);

@@ -5,7 +5,6 @@
  * 这里收敛成一个入口，从根上消灭 IDOR 遗漏（例如 notes 路由漏校验 userId 归属）。
  */
 import { getServerSession } from "next-auth";
-import type { NextRequest } from "next/server";
 import { authOptions } from "./auth";
 import { prisma } from "./prisma";
 import { unauthorized, forbidden } from "./api-errors";
@@ -29,10 +28,8 @@ export type AuthResult =
  * 拿到当前登录用户（含 DB 记录，保证 session 中的邮箱确实存在且未被禁用）。
  * 未登录 / 账号被禁用 / session 里的邮箱在 DB 里消失，都返回 response 让 route 直接 return。
  */
-export async function getCurrentUser(req?: NextRequest): Promise<AuthResult> {
-    const session = req
-        ? await getServerSession(authOptions)
-        : await getServerSession(authOptions);
+export async function getCurrentUser(): Promise<AuthResult> {
+    const session = await getServerSession(authOptions);
 
     if (!session?.user?.email) {
         return { ok: false, response: unauthorized("Authentication required") };

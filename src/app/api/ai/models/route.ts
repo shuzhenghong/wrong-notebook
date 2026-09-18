@@ -3,7 +3,7 @@ import { createLogger } from '@/lib/logger';
 import { getAppConfig, getActiveOpenAIConfig } from '@/lib/config';
 import { getCurrentUser } from '@/lib/server-auth';
 import { badRequest } from '@/lib/api-errors';
-import { validateBaseUrl } from '@/lib/ssrf';
+import { validateBaseUrlWithDns } from '@/lib/ssrf';
 
 const logger = createLogger('api:ai:models');
 
@@ -103,9 +103,10 @@ export async function GET(req: NextRequest) {
             return badRequest('No API key configured for this provider');
         }
 
-        // SSRF 最后一道闸门（理论上 settings POST 已校验，但防御式编程）
+        // SSRF 最后一道闸门（理论上 settings POST 已校验，但防御式编程）。
+        // 必须用带 DNS 解析的版本：静态黑名单拦不住"域名保存后被重指向内网"的重绑定
         if (baseUrl) {
-            const vr = validateBaseUrl(baseUrl);
+            const vr = await validateBaseUrlWithDns(baseUrl);
             if (!vr.ok) {
                 logger.warn({ baseUrl }, 'Configured baseUrl failed SSRF validation');
                 return badRequest('Configured baseUrl rejected: ' + vr.reason);

@@ -378,6 +378,8 @@ export const translations = {
                 copyright: "© 2025 Wttwins. All rights reserved.",
             },
             account: {
+                currentPassword: "Current Password (required to change password)",
+                passwordTooShort: "Password must be at least 8 characters",
                 changePassword: "Change Password (Leave empty to keep)",
                 update: "Update Profile",
             },
@@ -1037,6 +1039,8 @@ export const translations = {
                 copyright: "© 2025 Wttwins. All rights reserved.",
             },
             account: {
+                currentPassword: "当前密码 (修改密码时必填)",
+                passwordTooShort: "密码至少需要 8 个字符",
                 changePassword: "修改密码 (留空不修改)",
                 update: "更新个人信息",
             },

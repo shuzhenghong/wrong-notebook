@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
         },
     },
     mockGetCurrentUser: vi.fn(),
+    mockBcryptCompare: vi.fn(),
 }));
 
 // Mock Prisma client
@@ -44,6 +45,7 @@ vi.mock('@/lib/server-auth', () => ({
 // Mock bcryptjs
 vi.mock('bcryptjs', () => ({
     hash: vi.fn((password: string) => Promise.resolve(`hashed_${password}`)),
+    compare: mocks.mockBcryptCompare,
 }));
 
 // Import after mocks
@@ -97,6 +99,16 @@ describe('/api/user', () => {
     });
 
     describe('PATCH /api/user', () => {
+        beforeEach(() => {
+            // 改密流程会回查当前密码记录；默认：非强制改密 + 有旧密码哈希
+            mocks.mockPrismaUser.findUnique.mockResolvedValue({
+                password: 'hashed_oldpassword',
+                mustChangePassword: false,
+            });
+            // 默认：当前密码校验通过
+            mocks.mockBcryptCompare.mockResolvedValue(true);
+        });
+
         it('应该成功更新用户名', async () => {
             const updatedUser = {
                 name: 'New Name',
@@ -198,10 +210,40 @@ describe('/api/user', () => {
             const data = await response.json();
 
             expect(response.status).toBe(400);
-            expect(data.message).toBe('Password must be at least 6 characters');
+            expect(data.message).toBe('Password must be at least 8 characters');
         });
 
-        it('应该成功更新密码（>=6字符）', async () => {
+        it('应该拒绝缺少当前密码的改密请求', async () => {
+            const request = new Request('http://localhost/api/user', {
+                method: 'PATCH',
+                body: JSON.stringify({ password: 'newpassword123' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH(request);
+            const data = await response.json();
+
+            expect(response.status).toBe(400);
+            expect(data.message).toBe('Current password is required to change password');
+        });
+
+        it('应该拒绝错误的当前密码', async () => {
+            mocks.mockBcryptCompare.mockResolvedValue(false);
+
+            const request = new Request('http://localhost/api/user', {
+                method: 'PATCH',
+                body: JSON.stringify({ password: 'newpassword123', currentPassword: 'wrong-password' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH(request);
+            const data = await response.json();
+
+            expect(response.status).toBe(400);
+            expect(data.message).toBe('Current password is incorrect');
+        });
+
+        it('应该成功更新密码（提供正确的当前密码）', async () => {
             const updatedUser = {
                 name: 'Test User',
                 email: 'test@example.com',
@@ -212,7 +254,7 @@ describe('/api/user', () => {
 
             const request = new Request('http://localhost/api/user', {
                 method: 'PATCH',
-                body: JSON.stringify({ password: 'newpassword123' }),
+                body: JSON.stringify({ password: 'newpassword123', currentPassword: 'oldpassword' }),
                 headers: { 'Content-Type': 'application/json' },
             });
 
@@ -222,6 +264,33 @@ describe('/api/user', () => {
             // 验证密码被哈希处理
             const updateCall = mocks.mockPrismaUser.update.mock.calls[0][0];
             expect(updateCall.data.password).toBe('hashed_newpassword123');
+            // 强制改密标记被清除
+            expect(updateCall.data.mustChangePassword).toBe(false);
+        });
+
+        it('首次强制改密的用户无需提供当前密码', async () => {
+            mocks.mockPrismaUser.findUnique.mockResolvedValue({
+                password: 'hashed_temptemp',
+                mustChangePassword: true,
+            });
+            mocks.mockPrismaUser.update.mockResolvedValue({
+                name: 'Test User',
+                email: 'test@example.com',
+            });
+
+            const request = new Request('http://localhost/api/user', {
+                method: 'PATCH',
+                body: JSON.stringify({ password: 'newpassword123' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH(request);
+
+            expect(response.status).toBe(200);
+            const updateCall = mocks.mockPrismaUser.update.mock.calls[0][0];
+            expect(updateCall.data.password).toBe('hashed_newpassword123');
+            // 不应触发 compare
+            expect(mocks.mockBcryptCompare).not.toHaveBeenCalled();
         });
 
         it('应该接受 admin@localhost 邮箱格式', async () => {
@@ -406,7 +475,7 @@ describe('/api/user', () => {
 
             const request = new Request('http://localhost/api/user', {
                 method: 'PATCH',
-                body: JSON.stringify({ password: 'newAdminPassword123' }),
+                body: JSON.stringify({ password: 'newAdminPassword123', currentPassword: 'oldpassword' }),
                 headers: { 'Content-Type': 'application/json' },
             });
 
@@ -439,7 +508,7 @@ describe('/api/user', () => {
 
             const request = new Request('http://localhost/api/user', {
                 method: 'PATCH',
-                body: JSON.stringify({ password: 'newUserPassword123' }),
+                body: JSON.stringify({ password: 'newUserPassword123', currentPassword: 'oldpassword' }),
                 headers: { 'Content-Type': 'application/json' },
             });
 

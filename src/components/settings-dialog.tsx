@@ -49,6 +49,7 @@ interface ProfileFormState {
     educationStage: string;
     enrollmentYear: string | number;
     password: string;
+    currentPassword: string;
 }
 
 export function SettingsDialog() {
@@ -85,7 +86,8 @@ export function SettingsDialog() {
         email: "",
         educationStage: "",
         enrollmentYear: "",
-        password: ""
+        password: "",
+        currentPassword: ""
     });
     const [confirmPassword, setConfirmPassword] = useState("");
     const [profileLoading, setProfileLoading] = useState(false);
@@ -134,7 +136,8 @@ export function SettingsDialog() {
                 email: data.email || "",
                 educationStage: data.educationStage || "",
                 enrollmentYear: data.enrollmentYear || "",
-                password: ""
+                password: "",
+                currentPassword: ""
             });
         } catch (error) {
             frontendLogger.error('[SettingsDialog]', 'Failed to fetch profile', { error: error instanceof Error ? error.message : String(error) });
@@ -229,13 +232,20 @@ export function SettingsDialog() {
             }
 
             if (profile.password) {
+                if (profile.password.length < 8) {
+                    alert(t.settings?.account?.passwordTooShort || 'Password must be at least 8 characters');
+                    setProfileSaving(false);
+                    return;
+                }
                 payload.password = profile.password;
+                // 安全要求：改密必须提供当前密码（服务端会做 bcrypt 校验）
+                payload.currentPassword = profile.currentPassword;
             }
 
             await apiClient.patch("/api/user", payload);
 
             alert(t.settings?.messages?.profileUpdated || "Profile updated");
-            setProfile(prev => ({ ...prev, password: "" })); // Clear password field
+            setProfile(prev => ({ ...prev, password: "", currentPassword: "" })); // Clear password fields
             setConfirmPassword(""); // Clear confirm password field
             setShowPassword(false);
             setShowConfirmPassword(false);
@@ -835,6 +845,18 @@ export function SettingsDialog() {
                                 </div>
 
                                 <div className="space-y-3 pt-2 border-t">
+                                    {profile.password && (
+                                        <div className="space-y-2">
+                                            <Label>{t.settings?.account?.currentPassword || "Current Password (required to change password)"}</Label>
+                                            <Input
+                                                type="password"
+                                                value={profile.currentPassword}
+                                                onChange={(e) => setProfile({ ...profile, currentPassword: e.target.value })}
+                                                placeholder="******"
+                                                autoComplete="current-password"
+                                            />
+                                        </div>
+                                    )}
                                     <div className="space-y-2">
                                         <Label>{t.settings?.account?.changePassword || "Change Password (Leave empty to keep)"}</Label>
                                         <div className="relative">
@@ -843,7 +865,7 @@ export function SettingsDialog() {
                                                 value={profile.password}
                                                 onChange={(e) => setProfile({ ...profile, password: e.target.value })}
                                                 placeholder="******"
-                                                minLength={6}
+                                                minLength={8}
                                                 className="pr-10"
                                             />
                                             <Button
@@ -871,7 +893,7 @@ export function SettingsDialog() {
                                                     value={confirmPassword}
                                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                                     placeholder="******"
-                                                    minLength={6}
+                                                    minLength={8}
                                                     className="pr-10"
                                                 />
                                                 <Button

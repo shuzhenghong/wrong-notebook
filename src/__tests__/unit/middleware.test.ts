@@ -209,4 +209,65 @@ describe('middleware', () => {
             expect(response?.headers.get('location')).toContain('callbackUrl');
         });
     });
+
+    describe('强制改密用户的 API 级拦截', () => {
+        const mustChangeToken = {
+            sub: 'user-123',
+            email: 'test@example.com',
+            name: 'Test User',
+            mustChangePassword: true,
+        };
+
+        it('应该 403 拒绝未改密用户的 API 写请求', async () => {
+            vi.mocked(getToken).mockResolvedValue(mustChangeToken as any);
+
+            const req = new NextRequest('http://localhost:3000/api/error-items', { method: 'POST' });
+            const response = await middleware(req);
+
+            expect(response).not.toBeNull();
+            expect(response?.status).toBe(403);
+            const data = await response?.json();
+            expect(data.message).toContain('Password change required');
+        });
+
+        it('应该放行未改密用户的 API 读请求', async () => {
+            vi.mocked(getToken).mockResolvedValue(mustChangeToken as any);
+
+            const req = new NextRequest('http://localhost:3000/api/error-items/list', { method: 'GET' });
+            const response = await middleware(req);
+
+            // 放行 = undefined（route 自行鉴权）
+            expect(response).toBeUndefined();
+        });
+
+        it('应该放行未改密用户修改密码的请求', async () => {
+            vi.mocked(getToken).mockResolvedValue(mustChangeToken as any);
+
+            const req = new NextRequest('http://localhost:3000/api/user', { method: 'PATCH' });
+            const response = await middleware(req);
+
+            expect(response).toBeUndefined();
+        });
+
+        it('应该放行未改密用户的 NextAuth 流程请求', async () => {
+            vi.mocked(getToken).mockResolvedValue(mustChangeToken as any);
+
+            const req = new NextRequest('http://localhost:3000/api/auth/signout', { method: 'POST' });
+            const response = await middleware(req);
+
+            expect(response).toBeUndefined();
+        });
+
+        it('已改密用户不应被拦截', async () => {
+            vi.mocked(getToken).mockResolvedValue({
+                ...mustChangeToken,
+                mustChangePassword: false,
+            } as any);
+
+            const req = new NextRequest('http://localhost:3000/api/error-items', { method: 'POST' });
+            const response = await middleware(req);
+
+            expect(response).toBeUndefined();
+        });
+    });
 });

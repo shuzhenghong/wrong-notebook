@@ -70,6 +70,21 @@ export async function middleware(req: NextRequest) {
         return NextResponse.redirect(new URL(CHANGE_PASSWORD_PAGE, req.url));
     }
 
+    // 强制改密的 API 级收敛：未改密用户的写请求一律 403（读操作放行）。
+    // 放行：/api/auth/*（登录登出流程）、/api/user（改密本身必须可用）
+    if (isAuth && token?.mustChangePassword === true && pathname.startsWith("/api/")) {
+        const method = req.method.toUpperCase();
+        const isMutation = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+        const isAllowed = pathname.startsWith("/api/auth/") || pathname === "/api/user" || pathname === "/api/user/";
+        if (isMutation && !isAllowed) {
+            logger.warn({ path: pathname, method }, 'Blocked API mutation: password change required');
+            return NextResponse.json(
+                { message: "Password change required before performing this action" },
+                { status: 403 }
+            );
+        }
+    }
+
     // admin API / admin page — 必须登录 + 必须 admin 角色
     if (isAdminPath) {
         if (!isAuth) {

@@ -25,6 +25,14 @@ async function backupDatabase(): Promise<string | null> {
 
     const dbPath = databaseUrl.replace(/^file:/, '');
     const resolvedDbPath = path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath);
+
+    // VACUUM INTO 无法参数化，路径会拼进 SQL 字符串。
+    // 时间戳由服务端生成并已 sanitize，但若 DATABASE_URL 本身含引号则整条路径不可信 —— 直接中止备份（进而中止重置）。
+    if (resolvedDbPath.includes("'")) {
+        logger.error('DATABASE_URL path contains a single quote; refusing to build VACUUM INTO statement');
+        throw new Error('DATABASE_URL path contains unsafe characters');
+    }
+
     const backupDir = path.join(path.dirname(resolvedDbPath), 'backups');
 
     fs.mkdirSync(backupDir, { recursive: true });

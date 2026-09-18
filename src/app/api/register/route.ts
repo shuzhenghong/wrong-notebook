@@ -13,7 +13,7 @@ const REGISTER_RATE_WINDOW_MS = 60_000
 const userSchema = z.object({
     // 支持标准邮箱和本地邮箱（如 user@localhost）
     email: z.string().regex(/^[^\s@]+@[^\s@]+$/, "Invalid email format"),
-    password: z.string().min(6),
+    password: z.string().min(8),
     name: z.string().min(1),
     educationStage: z.string().optional(),
     enrollmentYear: z.number().optional(),
