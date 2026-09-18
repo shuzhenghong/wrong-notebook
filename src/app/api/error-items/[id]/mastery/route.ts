@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { notFound, forbidden, badRequest, internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:error-items:mastery');
@@ -12,21 +11,18 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
+        const user = auth.user;
 
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const body = await req.json().catch(() => ({}));
+        const masteryLevel = body?.masteryLevel;
 
-        const { masteryLevel } = await req.json();
+        if (!Number.isInteger(masteryLevel) || masteryLevel < 0 || masteryLevel > 5) {
+            return badRequest("masteryLevel must be an integer between 0 and 5");
+        }
 
         // Verify ownership before update
         const existingItem = await prisma.errorItem.findUnique({

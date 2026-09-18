@@ -54,6 +54,8 @@ async function seedAdmin({ prisma, hash: hashPassword }) {
             isActive: DEFAULT_ADMIN.isActive,
             educationStage: DEFAULT_ADMIN.educationStage,
             enrollmentYear: DEFAULT_ADMIN.enrollmentYear,
+            // 种子账号首次登录必须改密码
+            mustChangePassword: true,
         },
     });
 

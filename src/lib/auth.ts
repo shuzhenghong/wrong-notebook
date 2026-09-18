@@ -79,6 +79,7 @@ export const authOptions: NextAuthOptions = {
                     role: user.role,
                     // isActive 进 token，session callback 可以直接用
                     isActive: user.isActive,
+                    mustChangePassword: user.mustChangePassword === true,
                 } as any
             }
         })
@@ -104,7 +105,7 @@ export const authOptions: NextAuthOptions = {
                 try {
                     const u = await prisma.user.findUnique({
                         where: { email: token.email as string },
-                        select: { isActive: true, role: true, id: true },
+                        select: { isActive: true, role: true, id: true, mustChangePassword: true },
                     });
                     if (!u || !u.isActive) {
                         logger.warn({ email: token.email }, 'Session rejected: user missing or disabled');
@@ -115,6 +116,8 @@ export const authOptions: NextAuthOptions = {
                     token.role = u.role;
                     token.id = u.id;
                     token.isActive = true;
+                    // 同步最新改密标记（改密后重新登录即会刷新）
+                    token.mustChangePassword = u.mustChangePassword === true;
                 } catch (err) {
                     logger.warn({ error: (err as Error).message }, 'Failed to validate user on session callback');
                     // DB 连不上时宁可不放行 —— fail-closed
@@ -129,6 +132,7 @@ export const authOptions: NextAuthOptions = {
                     ...session.user,
                     id: token.id,
                     role: token.role,
+                    mustChangePassword: token.mustChangePassword === true,
                 }
             }
         },
@@ -140,6 +144,7 @@ export const authOptions: NextAuthOptions = {
                     id: (user as any).id,
                     role: (user as any).role,
                     isActive: (user as any).isActive,
+                    mustChangePassword: (user as any).mustChangePassword === true,
                 }
             }
             logger.debug('JWT callback - Subsequent call');

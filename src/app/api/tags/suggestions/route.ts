@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
+import { internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:tags:suggestions');
@@ -9,38 +9,29 @@ const logger = createLogger('api:tags:suggestions');
 /**
  * GET /api/tags/suggestions
  * 获取标签建议（支持搜索）
- * Query params: 
+ * Query params:
  *   - q: 搜索词
  *   - subject: 学科 (可选, e.g., 'math')
  *   - stage: 学段 (可选)
- * 
+ *
  * 现在从数据库 KnowledgeTag 表查询，包含系统标签和用户的自定义标签
  */
 export async function GET(req: Request) {
     try {
-        const session = await getServerSession(authOptions);
+        const auth = await getCurrentUser();
+        if (!auth.ok) return auth.response;
+        const user = auth.user;
+
         const { searchParams } = new URL(req.url);
         const query = searchParams.get("q")?.toLowerCase() || "";
         const subject = searchParams.get("subject") || undefined;
         const stage = searchParams.get("stage") || undefined;
 
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-                select: { id: true }
-            });
-        }
-
-        // 如果没有 session, 尝试默认用户? 还是只返回系统标签? 
-        // 按照现有逻辑，很多地方都有 fallback 到默认用户的逻辑，这里也保持一致比较好，
-        // 或者只返回系统标签。稳妥起见，如果已登录则返回用户标签。
-
         const whereCondition: any = {
             ...(subject ? { subject } : {}),
             OR: [
                 { isSystem: true },
-                ...(user ? [{ userId: user.id }] : [])
+                { userId: user.id },
             ]
         };
 

@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-errors";
+import { forbidden, notFound, internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
@@ -15,19 +14,11 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const user = auth.user;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: {
@@ -60,19 +51,11 @@ export async function PUT(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const user = auth.user;
 
         const body = await req.json();
         const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, subjectId,  wrongAnswerText, mistakeAnalysis, mistakeStatus, geogebraCommands } = body;
@@ -135,35 +118,55 @@ export async function PUT(
                     : 'other';
 
             const tagConnections: { id: string }[] = [];
-            for (const tagName of tagNames) {
-                let tag = await prisma.knowledgeTag.findFirst({
+
+            // 与创建接口保持一致：批量查 + 批量建，避免逐条往返
+            if (tagNames.length > 0) {
+                const existingTags = await prisma.knowledgeTag.findMany({
                     where: {
-                        name: tagName,
+                        name: { in: tagNames },
                         OR: [
                             { isSystem: true },
                             { userId: user.id },
                         ],
                     },
+                    select: { id: true, name: true },
                 });
 
-                if (!tag) {
+                const tagIdByName = new Map<string, string>();
+                for (const tag of existingTags) {
+                    if (!tagIdByName.has(tag.name)) tagIdByName.set(tag.name, tag.id);
+                }
+
+                const missingNames = tagNames.filter((name) => !tagIdByName.has(name));
+                if (missingNames.length > 0) {
                     // Determine grade context for the new tag
                     // Use the incoming gradeSemester (priority) or the existing one on the item
                     const contextGrade = gradeSemester !== undefined ? gradeSemester : errorItem.gradeSemester;
-
                     const parentId = await findParentTagIdForGrade(contextGrade, subjectKey);
 
-                    tag = await prisma.knowledgeTag.create({
-                        data: {
-                            name: tagName,
+                    await prisma.knowledgeTag.createMany({
+                        data: missingNames.map((name) => ({
+                            name,
                             subject: subjectKey,
                             isSystem: false,
                             userId: user.id,
-                            parentId: parentId, // Link to Grade node
-                        },
+                            parentId,
+                        })),
                     });
+
+                    const created = await prisma.knowledgeTag.findMany({
+                        where: { name: { in: missingNames }, userId: user.id },
+                        select: { id: true, name: true },
+                    });
+                    for (const tag of created) {
+                        if (!tagIdByName.has(tag.name)) tagIdByName.set(tag.name, tag.id);
+                    }
                 }
-                tagConnections.push({ id: tag.id });
+
+                for (const name of tagNames) {
+                    const id = tagIdByName.get(name);
+                    if (id) tagConnections.push({ id });
+                }
             }
 
             // 更新标签关联: 先断开所有，再连接新的

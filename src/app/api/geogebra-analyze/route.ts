@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { unauthorized } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 import { getAIService } from "@/lib/ai";
+import { getCurrentUser } from "@/lib/server-auth";
 
 const logger = createLogger('api:geogebra-analyze');
 
@@ -13,13 +11,10 @@ const logger = createLogger('api:geogebra-analyze');
  * Does NOT require an item ID.
  */
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        if (!session?.user?.email) {
-            return unauthorized("Authentication required");
-        }
-
         const body = await req.json();
         const { questionText, answerText, analysis } = body;
 

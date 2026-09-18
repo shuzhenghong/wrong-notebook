@@ -3,6 +3,12 @@ import { hash } from "bcryptjs"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { getAppConfig } from "@/lib/config"
+import { getClientIp, rateLimit } from "@/lib/rate-limit"
+import { tooManyRequests } from "@/lib/api-errors"
+
+// 防止被批量刷账号：同一 IP 每分钟最多 5 次注册
+const REGISTER_RATE_LIMIT = 5
+const REGISTER_RATE_WINDOW_MS = 60_000
 
 const userSchema = z.object({
     // 支持标准邮箱和本地邮箱（如 user@localhost）
@@ -14,6 +20,12 @@ const userSchema = z.object({
 })
 
 export async function POST(req: Request) {
+    const ip = getClientIp(req);
+    const limitResult = rateLimit(`register:${ip}`, REGISTER_RATE_LIMIT, REGISTER_RATE_WINDOW_MS);
+    if (!limitResult.ok) {
+        return tooManyRequests(limitResult.retryAfterSeconds);
+    }
+
     try {
         // 检查是否允许注册
         const config = getAppConfig();

@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
 import { getAIService } from "@/lib/ai";
-import { notFound, internalError, unauthorized } from "@/lib/api-errors";
+import { notFound, internalError, tooManyRequests, forbidden } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 const logger = createLogger('api:practice:generate');
 
-export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
+const PRACTICE_RATE_LIMIT = 30;
+const PRACTICE_RATE_WINDOW_MS = 60_000;
 
-    if (!session?.user) {
-        return unauthorized("Authentication required");
+export async function POST(req: Request) {
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+
+    const limitResult = rateLimit(`practice:${auth.user.id}`, PRACTICE_RATE_LIMIT, PRACTICE_RATE_WINDOW_MS);
+    if (!limitResult.ok) {
+        logger.warn({ userId: auth.user.id }, 'Practice generate rate limit exceeded');
+        return tooManyRequests(limitResult.retryAfterSeconds);
     }
 
     try {
@@ -25,6 +31,12 @@ export async function POST(req: Request) {
 
         if (!errorItemWithSubject) {
             return notFound("Item not found");
+        }
+
+        // 归属校验：不能拿别人的错题去生成练习题（否则会泄露他人题目内容）
+        if (errorItemWithSubject.userId !== auth.user.id) {
+            logger.warn({ userId: auth.user.id, errorItemId }, 'Forbidden practice generate on foreign item');
+            return forbidden("Not authorized to access this item");
         }
 
         let tags: string[] = [];

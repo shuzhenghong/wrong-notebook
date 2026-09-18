@@ -10,9 +10,39 @@ on:
 
 jobs:
   # ============================================
+  # 静态检查：lint + 类型检查（最快失败，最先反馈）
+  # ============================================
+  static-check:
+    runs-on: ubuntu-latest
+    name: Lint & Typecheck
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  # ============================================
   # 测试阶段（仅 main 分支 push 或 PR）
   # ============================================
   unit-test:
+    needs: static-check
     runs-on: ubuntu-latest
     name: Unit Tests
     # 只在非 tag push 时运行测试
@@ -28,7 +58,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
 
       - name: Run unit tests
         run: npm run test:unit
@@ -48,7 +78,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
 
       - name: Generate Prisma Client
         run: npx prisma generate
@@ -71,7 +101,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
 
       - name: Generate Prisma Client
         run: npx prisma generate
@@ -99,7 +129,15 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps

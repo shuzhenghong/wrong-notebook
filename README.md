@@ -59,7 +59,7 @@ docker run -d --name wrong-notebook \
   -p 3000:3000 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config:/app/config \
-  ghcr.io/wttwins/wrong-notebook
+  ghcr.io/shuzhenghong/wrong-notebook
 ```
 
 **选项 B：使用 Docker Compose (推荐)**
@@ -68,7 +68,7 @@ docker run -d --name wrong-notebook \
 
 1.  **下载配置文件**：
     ```bash
-    curl -o docker-compose.yml https://raw.githubusercontent.com/wttwins/wrong-notebook/refs/heads/main/docker-compose.yml
+    curl -o docker-compose.yml https://raw.githubusercontent.com/shuzhenghong/wrong-notebook/refs/heads/main/docker-compose.yml
     ```
 2.  **启动服务**：
     ```bash
@@ -88,7 +88,7 @@ docker run -d --name wrong-notebook \
 #### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/wttwins/wrong-notebook.git
+git clone https://github.com/shuzhenghong/wrong-notebook.git
 cd wrong-notebook
 ```
 
@@ -163,11 +163,18 @@ npx prisma db seed
 
 #### 6. 管理员账户
 
-默认管理员账户：
-- **邮箱**: `admin@localhost`
-- **密码**: `123456`
+项目**不再内置任何默认密码**。初始化管理员需先设置环境变量：
 
-> 管理员登录后，可在“设置” -> “用户管理”中管理系统用户。
+```bash
+export DEFAULT_ADMIN_PASSWORD="<一个足够强的密码>"
+npx prisma db seed     # 或 Docker 启动时传入 DEFAULT_ADMIN_PASSWORD
+```
+
+- **邮箱**: `admin@localhost`（可用 `DEFAULT_ADMIN_EMAIL` 覆盖）
+- **密码**: 取自 `DEFAULT_ADMIN_PASSWORD`，不会写入日志
+
+> 未设置该变量时不会创建管理员，也不会回退到弱口令。由种子创建的管理员**首次登录会被强制要求修改密码**。
+> 管理员登录后，可在"设置" -> "用户管理"中管理系统用户。
 
 #### 7. 启动开发服务器
 
@@ -234,6 +241,14 @@ npm run dev
   ```bash
   node scripts/reset-password.js user@example.com 123456 
   ```
+
+## 💾 数据存储与备份
+
+- **图片存储**：新上传的错题图片会落盘到 `data/images/<userId>/`，数据库只保存访问路径（`/api/images/...`）。历史以 base64 内联存储的图片仍可正常显示，无需迁移。
+- **Docker 部署**：数据库与图片都在 `./data` 卷内，备份整个 `data` 目录即可完整恢复。
+- **手动备份**：使用设置页的"导出数据"，或在停止写入后复制 `data/dev.db`。
+- **系统重置**：管理员执行"系统重置"前会自动在 `data/backups/` 生成一份一致性快照，失败则中止重置。
+- **健康检查**：部署后可访问 `/api/health`，返回应用与数据库连通状态（不正常时 HTTP 503）。
 
 ## 📄 许可证
 

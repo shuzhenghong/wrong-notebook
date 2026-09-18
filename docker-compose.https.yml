@@ -20,7 +20,7 @@ version: '3'
 
 services:
   wrong-notebook:
-    image: ghcr.io/wttwins/wrong-notebook:latest
+    image: ghcr.io/shuzhenghong/wrong-notebook:latest
     container_name: wrong-notebook
     restart: always
     ports:
@@ -30,7 +30,8 @@ services:
       # === 必须配置（请修改） ===
       # 替换为你的实际访问地址
       - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN
-      - NEXTAUTH_SECRET=your_secret_key_here
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?请在 .env 中设置 NEXTAUTH_SECRET}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:?请在 .env 中设置 DEFAULT_ADMIN_PASSWORD}
       - AUTH_TRUST_HOST=true
       
       # === HTTPS 配置 ===

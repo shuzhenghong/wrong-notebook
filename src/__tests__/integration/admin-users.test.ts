@@ -3,6 +3,7 @@
  * 测试管理员用户管理接口
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { unauthorized, forbidden } from '@/lib/api-errors';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
         },
         expires: '2025-12-31',
     },
+    mockGetAdminUser: vi.fn(),
 }));
 
 // Mock Prisma client
@@ -38,16 +40,32 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: admin 路由统一通过 getAdminUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getAdminUser: mocks.mockGetAdminUser,
+    getCurrentUser: mocks.mockGetAdminUser,
+}));
+
 // Import after mocks
 import { GET } from '@/app/api/admin/users/route';
 import { PATCH, DELETE } from '@/app/api/admin/users/[id]/route';
-import { getServerSession } from 'next-auth';
+
+const adminUser = {
+    id: 'admin-id',
+    email: 'admin@localhost',
+    name: 'Admin',
+    role: 'admin',
+    isActive: true,
+    mustChangePassword: false,
+    educationStage: 'junior_high',
+    enrollmentYear: 2024,
+};
 
 describe('/api/admin/users', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // Reset session to admin by default
-        vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
+        // Reset to admin by default
+        mocks.mockGetAdminUser.mockResolvedValue({ ok: true, user: adminUser });
     });
 
     describe('GET /api/admin/users', () => {
@@ -83,10 +101,7 @@ describe('/api/admin/users', () => {
         });
 
         it('应该拒绝非管理员访问', async () => {
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: { id: 'user-id', email: 'user@example.com', role: 'user' },
-                expires: '2025-12-31',
-            });
+            mocks.mockGetAdminUser.mockResolvedValue({ ok: false, response: forbidden("Admin role required") });
 
             const response = await GET();
 
@@ -94,11 +109,11 @@ describe('/api/admin/users', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            vi.mocked(getServerSession).mockResolvedValue(null);
+            mocks.mockGetAdminUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const response = await GET();
 
-            expect(response.status).toBe(403);
+            expect(response.status).toBe(401);
         });
     });
 
@@ -169,9 +184,9 @@ describe('/api/admin/users', () => {
             mocks.mockPrismaUser.findUnique.mockResolvedValue(superAdmin);
 
             // 使用另一个管理员身份尝试禁用超级管理员
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: { id: 'another-admin-id', email: 'admin2@example.com', role: 'admin' },
-                expires: '2025-12-31',
+            mocks.mockGetAdminUser.mockResolvedValue({
+                ok: true,
+                user: { ...adminUser, id: 'another-admin-id', email: 'admin2@example.com' },
             });
 
             const request = new Request('http://localhost/api/admin/users/super-admin-id', {
@@ -188,10 +203,7 @@ describe('/api/admin/users', () => {
         });
 
         it('应该拒绝非管理员访问', async () => {
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: { id: 'user-id', email: 'user@example.com', role: 'user' },
-                expires: '2025-12-31',
-            });
+            mocks.mockGetAdminUser.mockResolvedValue({ ok: false, response: forbidden("Admin role required") });
 
             const request = new Request('http://localhost/api/admin/users/target-id', {
                 method: 'PATCH',
@@ -247,9 +259,9 @@ describe('/api/admin/users', () => {
             mocks.mockPrismaUser.findUnique.mockResolvedValue(superAdmin);
 
             // 使用另一个管理员身份
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: { id: 'another-admin-id', email: 'admin2@example.com', role: 'admin' },
-                expires: '2025-12-31',
+            mocks.mockGetAdminUser.mockResolvedValue({
+                ok: true,
+                user: { ...adminUser, id: 'another-admin-id', email: 'admin2@example.com' },
             });
 
             const request = new Request('http://localhost/api/admin/users/super-admin-id', {
@@ -282,10 +294,7 @@ describe('/api/admin/users', () => {
         });
 
         it('应该拒绝非管理员访问', async () => {
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: { id: 'user-id', email: 'user@example.com', role: 'user' },
-                expires: '2025-12-31',
-            });
+            mocks.mockGetAdminUser.mockResolvedValue({ ok: false, response: forbidden("Admin role required") });
 
             const request = new Request('http://localhost/api/admin/users/target-id', {
                 method: 'DELETE',

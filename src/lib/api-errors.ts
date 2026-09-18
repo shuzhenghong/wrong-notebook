@@ -42,6 +42,9 @@ export const ErrorCode = {
     CONFLICT: 'CONFLICT',
     ALREADY_EXISTS: 'ALREADY_EXISTS',
 
+    // 频率限制 (429)
+    RATE_LIMITED: 'RATE_LIMITED',
+
     // 服务器错误 (500)
     INTERNAL_ERROR: 'INTERNAL_ERROR',
     DATABASE_ERROR: 'DATABASE_ERROR',
@@ -118,6 +121,19 @@ export function validationError(message: string, errors?: unknown): NextResponse
  */
 export function conflict(message: string): NextResponse<ApiErrorResponse> {
     return createErrorResponse(message, 409, ErrorCode.CONFLICT);
+}
+
+/**
+ * 429 Too Many Requests - 请求过于频繁
+ */
+export function tooManyRequests(retryAfterSeconds: number = 60): NextResponse<ApiErrorResponse> {
+    const response = createErrorResponse(
+        `Too many requests, please retry in ${retryAfterSeconds}s`,
+        429,
+        ErrorCode.RATE_LIMITED
+    );
+    response.headers.set('Retry-After', String(retryAfterSeconds));
+    return response;
 }
 
 /**

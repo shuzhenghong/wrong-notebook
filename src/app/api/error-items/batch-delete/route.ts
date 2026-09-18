@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, badRequest, internalError } from "@/lib/api-errors";
+import { badRequest, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
+import { deleteImage } from "@/lib/image-storage";
 
 const logger = createLogger('api:error-items:batch-delete');
 
@@ -15,7 +15,9 @@ const logger = createLogger('api:error-items:batch-delete');
 export async function POST(req: Request) {
     logger.info('POST /api/error-items/batch-delete called');
 
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+    const user = auth.user;
 
     try {
         const body = await req.json();
@@ -30,18 +32,6 @@ export async function POST(req: Request) {
             return badRequest("Cannot delete more than 100 items at once");
         }
 
-        // 验证用户身份
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
-
         logger.debug({ userId: user.id, idsCount: ids.length }, 'Batch delete request');
 
         // 查询所有要删除的错题，验证所有权
@@ -52,6 +42,7 @@ export async function POST(req: Request) {
             select: {
                 id: true,
                 userId: true,
+                imageStorageKey: true,
             },
         });
 
@@ -75,6 +66,11 @@ export async function POST(req: Request) {
                 },
             });
             deletedCount = result.count;
+
+            // 清理落盘图片
+            for (const item of itemsToDelete) {
+                if (item.userId === user.id) deleteImage(item.imageStorageKey);
+            }
         }
 
         logger.info({ deletedCount, requestedCount: ids.length, failedCount: unauthorizedIds.length }, 'Batch delete completed');

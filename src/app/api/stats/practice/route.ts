@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
 import { startOfMonth, subMonths, format } from "date-fns";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:stats:practice');
 
 export async function GET(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
-    if (!session || !session.user) {
-        return unauthorized();
-    }
-
-    // @ts-ignore
-    const userId = session.user.id;
+    const userId = auth.user.id;
 
     try {
         // 1. Subject Distribution

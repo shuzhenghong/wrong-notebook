@@ -602,6 +602,17 @@ export const translations = {
                 action: "Register",
                 hasAccount: "Already have an account? ",
                 loginHere: "Login here",
+            },
+            changePassword: {
+                title: "Change your password",
+                description: "This account was created with an initial password. Please set a new password before continuing.",
+                newPassword: "New Password",
+                confirmPassword: "Confirm New Password",
+                passwordMismatch: "Passwords do not match",
+                tooShort: "Password must be at least 8 characters",
+                failed: "Failed to change password",
+                submitting: "Updating...",
+                action: "Save and continue",
             }
         },
         printPreview: {
@@ -1249,6 +1260,17 @@ export const translations = {
                 action: "注册",
                 hasAccount: "已有账号？",
                 loginHere: "去登录",
+            },
+            changePassword: {
+                title: "修改密码",
+                description: "当前账号使用的是初始密码，请先设置新密码后再继续使用。",
+                newPassword: "新密码",
+                confirmPassword: "确认新密码",
+                passwordMismatch: "两次密码不一致",
+                tooShort: "密码至少需要 8 位",
+                failed: "修改密码失败",
+                submitting: "提交中...",
+                action: "保存并继续",
             }
         },
         printPreview: {

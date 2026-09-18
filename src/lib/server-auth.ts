@@ -10,8 +10,19 @@ import { authOptions } from "./auth";
 import { prisma } from "./prisma";
 import { unauthorized, forbidden } from "./api-errors";
 
+export interface AuthUser {
+    id: string;
+    email: string;
+    name: string | null;
+    role: string;
+    isActive: boolean;
+    mustChangePassword: boolean;
+    educationStage: string | null;
+    enrollmentYear: number | null;
+}
+
 export type AuthResult =
-    | { ok: true; user: { id: string; email: string; role: string; isActive: boolean } }
+    | { ok: true; user: AuthUser }
     | { ok: false; response: ReturnType<typeof unauthorized> };
 
 /**
@@ -27,9 +38,19 @@ export async function getCurrentUser(req?: NextRequest): Promise<AuthResult> {
         return { ok: false, response: unauthorized("Authentication required") };
     }
 
+    // 一次查询把常用字段都取回来，避免各路由再各自查一遍 user 表
     const user = await prisma.user.findUnique({
         where: { email: session.user.email },
-        select: { id: true, email: true, role: true, isActive: true },
+        select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            isActive: true,
+            mustChangePassword: true,
+            educationStage: true,
+            enrollmentYear: true,
+        },
     });
 
     if (!user) {
@@ -51,4 +72,21 @@ export function requireUnauthenticated() {
 /** 403 shortcut — 需要管理员。 */
 export function requireAdminResponse() {
     return forbidden("Admin role required");
+}
+
+export type AdminAuthResult =
+    | { ok: true; user: AuthUser }
+    | { ok: false; response: ReturnType<typeof unauthorized | typeof forbidden> };
+
+/**
+ * 需要管理员身份的路由统一入口：登录 + 账号启用 + role === 'admin' 一次校验完。
+ * 与 middleware 的 /api/admin 门禁互为纵深防御。
+ */
+export async function getAdminUser(): Promise<AdminAuthResult> {
+    const result = await getCurrentUser();
+    if (!result.ok) return result;
+    if (result.user.role !== 'admin') {
+        return { ok: false, response: forbidden("Admin role required") };
+    }
+    return result;
 }

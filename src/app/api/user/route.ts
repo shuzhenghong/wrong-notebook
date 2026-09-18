@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { hash } from "bcryptjs";
-import { unauthorized, notFound, badRequest, validationError, internalError } from "@/lib/api-errors";
+import { badRequest, notFound, validationError, internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:user');
@@ -18,20 +17,18 @@ const userUpdateSchema = z.object({
 });
 
 export async function GET() {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.email) {
-        return unauthorized();
-    }
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
         const user = await prisma.user.findUnique({
-            where: { email: session.user.email },
+            where: { id: auth.user.id },
             select: {
                 name: true,
                 email: true,
                 educationStage: true,
                 enrollmentYear: true,
+                mustChangePassword: true,
                 // Do not return password
             }
         });
@@ -50,11 +47,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
-    const session = await getServerSession(authOptions);
-
-    if (!session?.user?.email) {
-        return unauthorized();
-    }
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
         const body = await req.json();
@@ -85,16 +79,19 @@ export async function PATCH(req: Request) {
                 return badRequest("Password must be at least 6 characters");
             }
             updateData.password = await hash(password, 10);
+            // 主动改过密码后，解除"首次登录强制改密"标记
+            updateData.mustChangePassword = false;
         }
 
         const updatedUser = await prisma.user.update({
-            where: { email: session.user.email },
+            where: { id: auth.user.id },
             data: updateData,
             select: {
                 name: true,
                 email: true,
                 educationStage: true,
                 enrollmentYear: true,
+                mustChangePassword: true,
             }
         });
 

@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
 import { getAIService } from "@/lib/ai";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { badRequest, createErrorResponse, ErrorCode } from "@/lib/api-errors";
+import { badRequest, createErrorResponse, tooManyRequests, ErrorCode } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 const logger = createLogger('api:reanswer');
+
+const REANSWER_RATE_LIMIT = 20;
+const REANSWER_RATE_WINDOW_MS = 60_000;
 
 export async function POST(req: Request) {
     logger.info('Reanswer API called');
 
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
-    // 认证检查
-    if (!session) {
-        logger.warn('Unauthorized access attempt');
-        return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    const limitResult = rateLimit(`reanswer:${auth.user.id}`, REANSWER_RATE_LIMIT, REANSWER_RATE_WINDOW_MS);
+    if (!limitResult.ok) {
+        logger.warn({ userId: auth.user.id }, 'Reanswer rate limit exceeded');
+        return tooManyRequests(limitResult.retryAfterSeconds);
     }
 
     try {

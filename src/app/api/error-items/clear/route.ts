@@ -1,27 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
+import { deleteUserImages } from "@/lib/image-storage";
 
 const logger = createLogger('api:error-items:clear');
 
 export async function DELETE(req: Request) {
-    const session = await getServerSession(authOptions);
-
-    if (!session || !session.user) {
-        return unauthorized();
-    }
-
-    // @ts-ignore
-    const userId = session.user.id;
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+    const userId = auth.user.id;
 
     try {
         // Delete all error items for this user
         await prisma.errorItem.deleteMany({
             where: { userId }
         });
+
+        // 一并清理该用户落盘的图片
+        deleteUserImages(userId);
 
         return NextResponse.json({ message: "Error data cleared successfully" });
     } catch (error) {

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, badRequest, conflict, internalError } from "@/lib/api-errors";
+import { badRequest, conflict, internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:notebooks');
@@ -12,23 +11,15 @@ const logger = createLogger('api:notebooks');
  * 获取用户所有错题本（Subjects）
  */
 export async function GET() {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const userId = auth.user.id;
 
         let notebooks = await prisma.subject.findMany({
             where: {
-                userId: user.id,
+                userId,
             },
             include: {
                 _count: {
@@ -50,7 +41,7 @@ export async function GET() {
                 prisma.subject.create({
                     data: {
                         name,
-                        userId: user!.id,
+                        userId,
                     }
                 })
             ));
@@ -58,7 +49,7 @@ export async function GET() {
             // Fetch again
             notebooks = await prisma.subject.findMany({
                 where: {
-                    userId: user.id,
+                    userId,
                 },
                 include: {
                     _count: {
@@ -85,19 +76,11 @@ export async function GET() {
  * 创建新错题本
  */
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const userId = auth.user.id;
 
         const body = await req.json();
         const { name } = body;
@@ -111,7 +94,7 @@ export async function POST(req: Request) {
             where: {
                 name_userId: {
                     name: name.trim(),
-                    userId: user.id,
+                    userId,
                 },
             },
         });
@@ -123,7 +106,7 @@ export async function POST(req: Request) {
         const notebook = await prisma.subject.create({
             data: {
                 name: name.trim(),
-                userId: user.id,
+                userId,
             },
             include: {
                 _count: {

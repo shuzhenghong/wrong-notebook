@@ -3,6 +3,7 @@
  * 测试举一反三功能（生成类似题目和记录练习结果）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { unauthorized } from '@/lib/api-errors';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
         },
         expires: '2025-12-31',
     },
+    mockGetCurrentUser: vi.fn(),
 }));
 
 // Mock Prisma client
@@ -47,20 +49,36 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 路由统一通过 getCurrentUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: mocks.mockGetCurrentUser,
+}));
+
 // Import after mocks
 import { POST as GENERATE_POST } from '@/app/api/practice/generate/route';
 import { POST as RECORD_POST } from '@/app/api/practice/record/route';
-import { getServerSession } from 'next-auth';
+
+const authedUser = {
+    id: 'user-123',
+    email: 'user@example.com',
+    name: 'Test User',
+    role: 'user',
+    isActive: true,
+    mustChangePassword: false,
+    educationStage: 'junior_high',
+    enrollmentYear: 2024,
+};
 
 describe('/api/practice', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
+        mocks.mockGetCurrentUser.mockResolvedValue({ ok: true, user: authedUser });
     });
 
     describe('POST /api/practice/generate (生成类似题目)', () => {
         const mockErrorItem = {
             id: 'error-item-1',
+            userId: 'user-123',
             questionText: '求解 x + 2 = 5',
             knowledgePoints: '["一元一次方程", "移项"]',
             subject: { id: 'math', name: '数学' },
@@ -462,7 +480,7 @@ describe('/api/practice', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            vi.mocked(getServerSession).mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/practice/record', {
                 method: 'POST',
@@ -478,14 +496,11 @@ describe('/api/practice', () => {
             const data = await response.json();
 
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
+            expect(data.message).toBe('Authentication required');
         });
 
         it('应该拒绝 session 中没有 user 的请求', async () => {
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: undefined,
-                expires: '2025-12-31',
-            } as any);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/practice/record', {
                 method: 'POST',
@@ -501,7 +516,7 @@ describe('/api/practice', () => {
             const data = await response.json();
 
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
+            expect(data.message).toBe('Authentication required');
         });
 
         it('应该处理数据库错误', async () => {

@@ -2,7 +2,7 @@ version: '3'
 
 services:
   wrong-notebook:
-    image: ghcr.io/wttwins/wrong-notebook:latest
+    image: ghcr.io/shuzhenghong/wrong-notebook:latest
     container_name: wrong-notebook
     restart: always
     ports:
@@ -10,9 +10,12 @@ services:
     environment:
       # NEXTAUTH_URL 根据实际情况设置你的信息
       #- NEXTAUTH_URL=http://your_domain_name:3000
-      - NEXTAUTH_SECRET=your_secret_key
+      # 必须是随机强密钥：openssl rand -base64 32
+      # 启动脚本会校验，占位值 / 空值 / 少于 16 位都会拒绝启动
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?请在 .env 中设置 NEXTAUTH_SECRET}
+      # 首次启动用于创建管理员账号（登录后会被强制要求修改密码）
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:?请在 .env 中设置 DEFAULT_ADMIN_PASSWORD}
     volumes:
       # Persist the SQLite database
       - ./data:/app/data
       - ./config:/app/config
-

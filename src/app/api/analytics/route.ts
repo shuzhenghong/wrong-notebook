@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
 import { startOfMonth, subMonths, format, startOfWeek, subDays } from "date-fns";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:analytics');
 
 export async function GET(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
-    if (!session || !session.user) {
-        return unauthorized();
-    }
-
-    // @ts-ignore
-    const userId = session.user.id;
+    const userId = auth.user.id;
 
     try {
         // 1. Total Errors
@@ -36,11 +31,12 @@ export async function GET(req: Request) {
         const masteryRate = totalErrors > 0 ? ((masteredCount / totalErrors) * 100).toFixed(1) : 0;
 
         // 4. Subject Distribution - Get error items grouped by subject
+        // 只取学科名，避免把整行（可能含历史 base64 图片）拉进内存
         const errorItemsWithSubject = await prisma.errorItem.findMany({
             where: { userId },
-            include: {
-                subject: true
-            }
+            select: {
+                subject: { select: { name: true } },
+            },
         });
 
         const subjectMap = new Map<string, number>();

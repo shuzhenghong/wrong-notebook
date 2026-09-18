@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createLogger } from './logger';
-import { validateBaseUrl } from './ssrf';
+import { validateBaseUrl, validateBaseUrlWithDns } from './ssrf';
 import { FULL_MASK, maskSensitiveFields } from './secrets';
 
 const logger = createLogger('config');
@@ -247,5 +247,5 @@ export function getMaskedAppConfig(): AppConfig {
 }
 
 // 预留工具：深层脱敏任意对象（日志、异常），供外部调用
-export { maskSensitiveFields, validateBaseUrl };
+export { maskSensitiveFields, validateBaseUrl, validateBaseUrlWithDns };
 

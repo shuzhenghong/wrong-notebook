@@ -3,6 +3,7 @@
  * 测试用户信息获取和更新接口
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { unauthorized } from '@/lib/api-errors';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
             name: 'Test User',
         },
     },
+    mockGetCurrentUser: vi.fn(),
 }));
 
 // Mock Prisma client
@@ -34,6 +36,11 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 路由统一通过 getCurrentUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: mocks.mockGetCurrentUser,
+}));
+
 // Mock bcryptjs
 vi.mock('bcryptjs', () => ({
     hash: vi.fn((password: string) => Promise.resolve(`hashed_${password}`)),
@@ -42,9 +49,21 @@ vi.mock('bcryptjs', () => ({
 // Import after mocks
 import { GET, PATCH } from '@/app/api/user/route';
 
+const authedUser = {
+    id: 'user-1',
+    email: 'test@example.com',
+    name: 'Test User',
+    role: 'user',
+    isActive: true,
+    mustChangePassword: false,
+    educationStage: 'junior_high',
+    enrollmentYear: 2024,
+};
+
 describe('/api/user', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.mockGetCurrentUser.mockResolvedValue({ ok: true, user: authedUser });
     });
 
     describe('GET /api/user', () => {
@@ -331,19 +350,17 @@ describe('/api/user', () => {
         });
 
         it('未登录用户应该被拒绝访问 GET', async () => {
-            const { getServerSession } = await import('next-auth');
-            vi.mocked(getServerSession).mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const response = await GET();
             const data = await response.json();
 
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
+            expect(data.message).toBe('Authentication required');
         });
 
         it('未登录用户应该被拒绝访问 PATCH', async () => {
-            const { getServerSession } = await import('next-auth');
-            vi.mocked(getServerSession).mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/user', {
                 method: 'PATCH',
@@ -355,23 +372,17 @@ describe('/api/user', () => {
             const data = await response.json();
 
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
+            expect(data.message).toBe('Authentication required');
         });
 
         it('session 中没有 email 的用户应该被拒绝', async () => {
-            const { getServerSession } = await import('next-auth');
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: {
-                    name: 'No Email User',
-                },
-                expires: '2025-12-31',
-            } as any);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const response = await GET();
             const data = await response.json();
 
             expect(response.status).toBe(401);
-            expect(data.message).toBe('Unauthorized');
+            expect(data.message).toBe('Authentication required');
         });
 
         it('管理员可以修改密码', async () => {
@@ -441,15 +452,10 @@ describe('/api/user', () => {
     });
 
     describe('管理员特有功能', () => {
-        it('管理员修改信息时使用的是自己的 session email', async () => {
-            const { getServerSession } = await import('next-auth');
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: {
-                    email: 'admin@localhost',
-                    name: 'Admin',
-                    role: 'admin',
-                },
-                expires: '2025-12-31',
+        it('管理员修改信息时使用的是自己的身份 id', async () => {
+            mocks.mockGetCurrentUser.mockResolvedValue({
+                ok: true,
+                user: { ...authedUser, id: 'admin-1', email: 'admin@localhost', name: 'Admin', role: 'admin' },
             });
 
             const updatedUser = {
@@ -468,20 +474,15 @@ describe('/api/user', () => {
 
             await PATCH(request);
 
-            // 验证更新操作使用了 session 中的 email
+            // 验证更新操作使用了当前用户 id（由 getCurrentUser 服务端确认，不能伪造）
             const updateCall = mocks.mockPrismaUser.update.mock.calls[0][0];
-            expect(updateCall.where.email).toBe('admin@localhost');
+            expect(updateCall.where.id).toBe('admin-1');
         });
 
-        it('普通用户修改信息时使用的是自己的 session email', async () => {
-            const { getServerSession } = await import('next-auth');
-            vi.mocked(getServerSession).mockResolvedValue({
-                user: {
-                    email: 'normaluser@example.com',
-                    name: 'Normal User',
-                    role: 'user',
-                },
-                expires: '2025-12-31',
+        it('普通用户修改信息时使用的是自己的身份 id', async () => {
+            mocks.mockGetCurrentUser.mockResolvedValue({
+                ok: true,
+                user: { ...authedUser, id: 'normal-1', email: 'normaluser@example.com', name: 'Normal User', role: 'user' },
             });
 
             const updatedUser = {
@@ -500,9 +501,9 @@ describe('/api/user', () => {
 
             await PATCH(request);
 
-            // 验证更新操作使用了 session 中的 email（不能修改其他用户）
+            // 验证更新操作使用了当前用户 id（不能修改其他用户）
             const updateCall = mocks.mockPrismaUser.update.mock.calls[0][0];
-            expect(updateCall.where.email).toBe('normaluser@example.com');
+            expect(updateCall.where.id).toBe('normal-1');
         });
     });
 });

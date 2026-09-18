@@ -5,9 +5,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
-import { authOptions } from '@/lib/auth';
+import { getCurrentUser } from '@/lib/server-auth';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('api:tags');
@@ -59,10 +58,11 @@ function buildTagTree(tags: any[]): TagTreeNode[] {
  */
 export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.id) {
+        const auth = await getCurrentUser();
+        if (!auth.ok) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        const userId = auth.user.id;
 
         const { searchParams } = new URL(request.url);
         const subject = searchParams.get('subject');
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
                 subject,
                 OR: [
                     { isSystem: true },
-                    { userId: session.user.id },
+                    { userId },
                 ],
             },
             orderBy: [
@@ -132,10 +132,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const auth = await getCurrentUser();
+        if (!auth.ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        const userId = auth.user.id;
 
         const body = await request.json();
         const { name, subject, parentId } = body;
@@ -150,7 +149,7 @@ export async function POST(request: NextRequest) {
             where: {
                 name: name.trim(),
                 subject,
-                userId: session.user.id,
+                userId,
                 parentId: parentId || null,
             },
         });
@@ -166,7 +165,7 @@ export async function POST(request: NextRequest) {
                 subject,
                 parentId: parentId || null,
                 isSystem: false,
-                userId: session.user.id,
+                userId,
             },
         });
 
@@ -185,10 +184,11 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.id) {
+        const auth = await getCurrentUser();
+        if (!auth.ok) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        const userId = auth.user.id;
 
         const { searchParams } = new URL(request.url);
         const tagId = searchParams.get('id');
@@ -201,7 +201,7 @@ export async function DELETE(request: NextRequest) {
         const tag = await prisma.knowledgeTag.findFirst({
             where: {
                 id: tagId,
-                userId: session.user.id,
+                userId,
                 isSystem: false,
             },
         });

@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/lib/constants/pagination";
 
 const logger = createLogger('api:error-items:list');
 
 export async function GET(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     const { searchParams } = new URL(req.url);
     const subjectId = searchParams.get("subjectId");
@@ -24,16 +24,7 @@ export async function GET(req: Request) {
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, parseInt(searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10)));
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
+        const user = auth.user;
 
         const whereClause: Prisma.ErrorItemWhereInput = {
             userId: user.id,
@@ -143,17 +134,48 @@ export async function GET(req: Request) {
             where: whereClause,
         });
 
-        // 分页查询
-        const errorItems = await prisma.errorItem.findMany({
-            where: whereClause,
-            orderBy: { createdAt: "desc" },
-            include: {
-                subject: true,
-                tags: true,
-            },
-            skip: (page - 1) * pageSize,
-            take: pageSize,
-        });
+        // 默认只返回列表需要的字段：不要把整张图片（可能是 base64）拉出来
+        // 打印预览等确实需要完整字段的场景，显式传 full=true
+        const full = searchParams.get("full") === "true";
+        const listSelect = {
+            id: true,
+            userId: true,
+            subjectId: true,
+            questionText: true,
+            answerText: true,
+            analysis: true,
+            wrongAnswerText: true,
+            mistakeAnalysis: true,
+            mistakeStatus: true,
+            masteryLevel: true,
+            gradeSemester: true,
+            paperLevel: true,
+            createdAt: true,
+            updatedAt: true,
+            imageStorageKey: true,
+            subject: { select: { id: true, name: true } },
+            tags: { select: { id: true, name: true, subject: true } },
+        };
+
+        // 分页查询（两种形态分开写，避免 Prisma 的 include/select 联合类型推断失败）
+        const errorItems = full
+            ? await prisma.errorItem.findMany({
+                where: whereClause,
+                orderBy: { createdAt: "desc" },
+                include: {
+                    subject: true,
+                    tags: true,
+                },
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            })
+            : await prisma.errorItem.findMany({
+                where: whereClause,
+                orderBy: { createdAt: "desc" },
+                select: listSelect,
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            });
 
         const totalPages = Math.ceil(total / pageSize);
 
@@ -265,19 +287,34 @@ async function findChapterDescendantTagIds(chapterName: string, userId: string):
 
     if (!chapterTag) return [];
 
-    // 2. 递归查找所有后代标签
+    // 2. 一次性取出全部标签的父子关系，在内存里做 BFS
+    //    （原来是逐层查库：树有多深就查多少轮，深层标签体系下会放大成几十次查询）
+    const allTags = await prisma.knowledgeTag.findMany({
+        where: {
+            OR: [
+                { isSystem: true },
+                { userId: userId },
+            ],
+        },
+        select: { id: true, parentId: true },
+    });
+
+    const childrenOf = new Map<string, string[]>();
+    for (const tag of allTags) {
+        if (!tag.parentId) continue;
+        const siblings = childrenOf.get(tag.parentId);
+        if (siblings) siblings.push(tag.id);
+        else childrenOf.set(tag.parentId, [tag.id]);
+    }
+
     const descendantIds: string[] = [chapterTag.id];
     const queue: string[] = [chapterTag.id];
 
     while (queue.length > 0) {
         const parentId = queue.shift()!;
-        const children = await prisma.knowledgeTag.findMany({
-            where: { parentId: parentId },
-            select: { id: true }
-        });
-        for (const child of children) {
-            descendantIds.push(child.id);
-            queue.push(child.id);
+        for (const childId of childrenOf.get(parentId) ?? []) {
+            descendantIds.push(childId);
+            queue.push(childId);
         }
     }
 

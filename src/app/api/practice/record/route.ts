@@ -1,28 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { badRequest, internalError } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:practice:record');
 
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
-
-    if (!session || !session.user) {
-        return unauthorized();
-    }
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
         const { subject, difficulty, isCorrect } = await req.json();
 
-        // @ts-ignore
-        const userId = session.user.id;
+        if (!subject || typeof isCorrect !== 'boolean') {
+            return badRequest("subject and isCorrect are required");
+        }
 
         const record = await prisma.practiceRecord.create({
             data: {
-                userId,
+                userId: auth.user.id,
                 subject,
                 difficulty,
                 isCorrect,

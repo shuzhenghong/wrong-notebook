@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server"
-import { getServerSession } from "next-auth"
-import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
-import { requireAdmin } from "@/lib/auth-utils"
-import { forbidden, notFound, internalError } from "@/lib/api-errors"
+import { getAdminUser } from "@/lib/server-auth"
+import { notFound, internalError } from "@/lib/api-errors"
 import { createLogger } from "@/lib/logger"
 
 const logger = createLogger('api:admin:users:id:detail')
@@ -13,11 +11,8 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions)
-
-    if (!requireAdmin(session)) {
-        return forbidden("Admin access required")
-    }
+    const auth = await getAdminUser()
+    if (!auth.ok) return auth.response
 
     try {
         // 获取用户基本信息

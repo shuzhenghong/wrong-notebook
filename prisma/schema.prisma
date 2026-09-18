@@ -24,6 +24,7 @@ model User {
 
   role      String   @default("user") // "admin" or "user"
   isActive  Boolean  @default(true)   // 用户是否启用
+  mustChangePassword Boolean @default(false) // 首次登录强制修改密码（种子/管理员重置后的账号）
 
   errorItems ErrorItem[]
   subjects   Subject[]
@@ -85,7 +86,9 @@ model ErrorItem {
   subjectId      String?
   subject        Subject? @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
-  originalImageUrl String
+  originalImageUrl String   // 图片地址：新数据为 /api/images/<key>，历史数据可能是 data: URL
+  imageStorageKey  String?  // 图片落盘后的相对存储键，为空表示仍是内联 base64（历史数据）
+  imageMimeType    String?  // 落盘图片的 MIME 类型
   ocrText          String?
 
   // AI Analysis

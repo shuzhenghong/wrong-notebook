@@ -46,6 +46,23 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 路由统一通过 getCurrentUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: {
+            id: 'user-1',
+            email: 'user@example.com',
+            name: 'Test User',
+            role: 'user',
+            isActive: true,
+            mustChangePassword: false,
+            educationStage: 'junior_high',
+            enrollmentYear: 2024,
+        },
+    }),
+}));
+
 // Mock knowledge-tags
 vi.mock('@/lib/knowledge-tags', () => ({
     normalizeTags: vi.fn((tags: string[]) => tags),
@@ -56,12 +73,10 @@ vi.mock('@/lib/knowledge-tags', () => ({
 
 // Import after mocks
 import { POST } from '@/app/api/analyze/route';
-import { getServerSession } from 'next-auth';
 
 describe('/api/analyze', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
     });
 
     describe('POST /api/analyze (图像分析)', () => {

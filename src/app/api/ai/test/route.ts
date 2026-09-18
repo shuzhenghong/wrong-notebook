@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { OpenAIProvider } from '@/lib/ai/openai-provider';
 import { GeminiProvider } from '@/lib/ai/gemini-provider';
 import { AzureOpenAIProvider } from '@/lib/ai/azure-provider';
+import { getCurrentUser } from '@/lib/server-auth';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('api:ai:test');
@@ -93,9 +92,9 @@ export interface AITestResponse {
 
 export async function POST(request: NextRequest) {
     try {
-        // 验证登录
-        const session = await getServerSession(authOptions);
-        if (!session?.user) {
+        // 验证登录（getCurrentUser 同时确认账号存在且未禁用）
+        const auth = await getCurrentUser();
+        if (!auth.ok) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 

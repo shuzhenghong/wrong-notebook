@@ -1,79 +1,109 @@
 
 import { NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { internalError, unauthorized, forbidden } from "@/lib/api-errors";
+import { getAdminUser } from "@/lib/server-auth";
+import { internalError, badRequest } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:admin:system-reset');
 
-export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
+// 二次确认令牌：必须由客户端显式提交，防止误触/CSRF 一键清空
+const CONFIRM_TOKEN = "DELETE ALL DATA";
 
-    if (!session || !session.user) {
-        return unauthorized();
+/**
+ * 把当前 SQLite 库整体备份到 data/backups 目录。
+ * 使用 VACUUM INTO 而不是 copyFile，保证拿到的是一致性快照（含 WAL）。
+ */
+async function backupDatabase(): Promise<string | null> {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl || !databaseUrl.startsWith('file:')) {
+        logger.warn('DATABASE_URL is not a SQLite file url, skipping backup');
+        return null;
     }
+
+    const dbPath = databaseUrl.replace(/^file:/, '');
+    const resolvedDbPath = path.isAbsolute(dbPath) ? dbPath : path.join(process.cwd(), dbPath);
+    const backupDir = path.join(path.dirname(resolvedDbPath), 'backups');
+
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupFile = path.join(
+        backupDir,
+        `before-reset-${new Date().toISOString().replace(/[:.]/g, '-')}.db`
+    );
+
+    // VACUUM INTO 不支持参数绑定；路径完全由服务端生成，不含用户输入
+    await prisma.$executeRawUnsafe(`VACUUM INTO '${backupFile.replace(/'/g, "''")}'`);
+    return backupFile;
+}
+
+export async function POST(req: Request) {
+    const auth = await getAdminUser();
 
     // Strictly enforce Admin role
-    if ((session.user as any).role !== 'admin') {
-        return forbidden("Admin access required for system reset");
-    }
-    // but typically this should be restricted.
-    // The user said "include user data", but wiping SELF is tricky.
-    // Let's implement safer "Factory Reset" logic:
-    // 1. Delete all ErrorItems
-    // 2. Delete all PracticeRecords
-    // 3. Delete all Subjects (Notebooks) - optional, but user said "clean all data"
-    // 4. Delete all Custom KnowledgeTags (isSystem = false)
-    // 5. Delete all AI Usage Logs (if any)
+    if (!auth.ok) return auth.response;
+    const adminEmail = auth.user.email;
 
-    // We do NOT delete the current user, so they can still log in.
-    // If "include user data" means other users, we could delete them too, 
-    // but that invalidates their sessions immediately. 
-    // Let's assume for a single-user or small-team app, 'user data' means 'data belonging to users'.
+    let confirm: string | undefined;
+    try {
+        const body = await req.json();
+        confirm = typeof body?.confirm === 'string' ? body.confirm : undefined;
+    } catch {
+        confirm = undefined;
+    }
+
+    if (confirm !== CONFIRM_TOKEN) {
+        logger.warn({ email: adminEmail }, 'System reset rejected: missing confirm token');
+        return badRequest(`This action wipes all data. Send { "confirm": "${CONFIRM_TOKEN}" } to proceed.`);
+    }
 
     try {
-        logger.info({ email: session.user.email }, 'System reset initiated');
+        // 1) 先备份；备份失败就绝不删数据
+        let backupPath: string | null = null;
+        try {
+            backupPath = await backupDatabase();
+        } catch (backupError) {
+            logger.error({ error: backupError }, 'System reset aborted: backup failed');
+            return internalError("Backup failed, reset aborted");
+        }
+
+        // 2) 统计一次，用于审计留痕
+        const [items, users, subjects, tags] = await Promise.all([
+            prisma.errorItem.count(),
+            prisma.user.count(),
+            prisma.subject.count(),
+            prisma.knowledgeTag.count({ where: { isSystem: false } }),
+        ]);
+
+        logger.warn({ email: adminEmail, backupPath }, 'System reset initiated');
 
         await prisma.$transaction(async (tx) => {
-            // 1. Delete Practice Records (dependent on nothing usually, or User/ErrorItem)
             await tx.practiceRecord.deleteMany({});
-
-            // 2. Delete Error Items (cascade deletes tags? No, m-to-n. But we want to wipe items)
             await tx.errorItem.deleteMany({});
-
-            // 3. Delete Subjects (Notebooks)
-            // Default subjects? Maybe keep them? User said "standard tags set to default".
-            // Usually subjects like 'Math' are created by users or system default?
-            // If we delete all subjects, the app might break if it expects at least one.
-            // The app creates default notebook on fetch if missing. So safe to delete.
             await tx.subject.deleteMany({});
+            await tx.knowledgeTag.deleteMany({ where: { isSystem: false } });
 
-            // 4. Delete Custom Tags (keep system tags)
-            await tx.knowledgeTag.deleteMany({
-                where: {
-                    isSystem: false,
-                }
-            });
-
-            // 5. Delete other users? 
-            // "All data, including user data". 
-            // If I delete other users, I am truly resetting the system.
-            // Let's protect the CURRENT user.
-            if (session.user?.email) {
+            // 保留当前管理员，避免把自己锁在门外
+            if (adminEmail) {
                 await tx.user.deleteMany({
-                    where: {
-                        email: {
-                            not: session.user.email
-                        }
-                    }
+                    where: { email: { not: adminEmail } }
                 });
             }
         });
 
-        logger.info('System reset completed successfully');
-        return NextResponse.json({ success: true, message: "System reset complete" });
+        logger.warn({
+            email: adminEmail,
+            backupPath,
+            deleted: { items, subjects, tags, usersBefore: users },
+        }, 'System reset completed');
+
+        return NextResponse.json({
+            success: true,
+            message: "System reset complete",
+            backup: backupPath ? path.basename(backupPath) : null,
+            deleted: { items, subjects, tags },
+        });
     } catch (error) {
         logger.error({ error }, 'System reset error');
         return internalError("Failed to reset system");

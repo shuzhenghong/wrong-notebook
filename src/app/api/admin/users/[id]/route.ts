@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server"
-import { getServerSession } from "next-auth"
-import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
-import { requireAdmin } from "@/lib/auth-utils"
-import { forbidden, badRequest, internalError } from "@/lib/api-errors"
+import { getAdminUser } from "@/lib/server-auth"
+import { badRequest, internalError } from "@/lib/api-errors"
+import { deleteUserImages } from "@/lib/image-storage"
 import { createLogger } from "@/lib/logger"
 
 const logger = createLogger('api:admin:users:id');
@@ -13,18 +12,19 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions)
-
-    if (!requireAdmin(session)) {
-        return forbidden("Admin access required")
-    }
+    const auth = await getAdminUser()
+    if (!auth.ok) return auth.response
 
     try {
         const body = await req.json()
         const { isActive } = body
 
+        if (typeof isActive !== 'boolean') {
+            return badRequest("isActive must be a boolean")
+        }
+
         // Prevent disabling self
-        if (id === session?.user.id) {
+        if (id === auth.user.id) {
             return badRequest("Cannot disable your own account")
         }
 
@@ -58,15 +58,12 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions)
-
-    if (!requireAdmin(session)) {
-        return forbidden("Admin access required")
-    }
+    const auth = await getAdminUser()
+    if (!auth.ok) return auth.response
 
     try {
         // Prevent deleting self
-        if (id === session?.user.id) {
+        if (id === auth.user.id) {
             return badRequest("Cannot delete your own account")
         }
 
@@ -86,6 +83,9 @@ export async function DELETE(
                 id
             }
         })
+
+        // 清理被删用户的落盘图片
+        deleteUserImages(id)
 
         return NextResponse.json(user)
     } catch (error) {

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { internalError, unauthorized, forbidden } from "@/lib/api-errors";
+import { internalError } from "@/lib/api-errors";
+import { getAdminUser } from "@/lib/server-auth";
 import {
     MATH_CURRICULUM, MATH_GRADE_ORDER,
     PHYSICS_CURRICULUM, PHYSICS_GRADE_ORDER,
@@ -27,18 +26,11 @@ interface TagAssociation {
 }
 
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
-
-    if (!session || !session.user) {
-        return unauthorized();
-    }
-
-    if ((session.user as any).role !== 'admin') {
-        return forbidden("Admin access required for tag migration");
-    }
+    const auth = await getAdminUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        logger.info({ email: session.user.email }, 'Tag migration initiated');
+        logger.info({ email: auth.user.email }, 'Tag migration initiated');
         let totalCreated = 0;
         let associationsRestored = 0;
         let customTagsCreated = 0;
@@ -147,7 +139,7 @@ export async function POST(req: Request) {
 
                         // 查找执行操作的用户
                         const adminUser = await tx.user.findUnique({
-                            where: { email: session.user!.email! },
+                            where: { email: auth.user.email },
                             select: { id: true }
                         });
 

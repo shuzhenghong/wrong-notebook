@@ -7,6 +7,8 @@ const logger = createLogger('middleware');
 
 // 登录/注册 这类公开页面
 const PUBLIC_PAGES = ["/login", "/register", "/latex-test"];
+// 首次登录强制改密的落地页
+const CHANGE_PASSWORD_PAGE = "/change-password";
 // admin 页面 + admin API — middleware 保护
 const ADMIN_PREFIXES = ["/admin", "/api/admin"];
 
@@ -51,10 +53,21 @@ export async function middleware(req: NextRequest) {
 
     if (isPublicPage) {
         if (isAuth) {
+            // 待改密用户直接送去改密页，不要落到首页
+            if (token?.mustChangePassword === true) {
+                logger.debug('Redirecting user with pending password change');
+                return NextResponse.redirect(new URL(CHANGE_PASSWORD_PAGE, req.url));
+            }
             logger.debug('Redirecting authenticated user to /');
             return NextResponse.redirect(new URL("/", req.url));
         }
-        return null;
+        return NextResponse.next();
+    }
+
+    // 首次登录强制改密：除改密页自身与 API 外，其余页面一律拦下
+    if (isAuth && token?.mustChangePassword === true && !pathname.startsWith("/api/") && pathname !== CHANGE_PASSWORD_PAGE) {
+        logger.debug('Password change required, redirecting');
+        return NextResponse.redirect(new URL(CHANGE_PASSWORD_PAGE, req.url));
     }
 
     // admin API / admin page — 必须登录 + 必须 admin 角色

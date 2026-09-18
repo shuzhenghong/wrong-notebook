@@ -32,6 +32,23 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 路由统一通过 getCurrentUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: {
+            id: 'user-1',
+            email: 'user@example.com',
+            name: 'Test User',
+            role: 'user',
+            isActive: true,
+            mustChangePassword: false,
+            educationStage: 'junior_high',
+            enrollmentYear: 2024,
+        },
+    }),
+}));
+
 // Import after mocks
 import { POST } from '@/app/api/reanswer/route';
 

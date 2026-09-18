@@ -3,6 +3,7 @@
  * 测试错题创建、获取、更新等接口
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { unauthorized } from '@/lib/api-errors';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
@@ -21,7 +22,9 @@ const mocks = vi.hoisted(() => ({
     },
     mockPrismaKnowledgeTag: {
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         create: vi.fn(),
+        createMany: vi.fn(),
     },
     mockPrismaSubject: {
         findUnique: vi.fn(),
@@ -33,6 +36,7 @@ const mocks = vi.hoisted(() => ({
         },
         expires: '2025-12-31',
     },
+    mockGetCurrentUser: vi.fn(),
 }));
 
 // Mock Prisma client
@@ -54,12 +58,9 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
-// Mock server-auth: notes route 现在通过它校验登录 + 归属
+// Mock server-auth: 所有 error-items 路由现在通过它校验登录 + 归属
 vi.mock('@/lib/server-auth', () => ({
-    getCurrentUser: vi.fn().mockResolvedValue({
-        ok: true,
-        user: { id: 'user-1', email: 'user@example.com', role: 'user', isActive: true },
-    }),
+    getCurrentUser: mocks.mockGetCurrentUser,
 }));
 
 // Mock grade-calculator
@@ -74,21 +75,23 @@ import { GET as GET_LIST } from '@/app/api/error-items/list/route';
 import { PATCH as PATCH_NOTES } from '@/app/api/error-items/[id]/notes/route';
 import { PATCH as PATCH_MASTERY } from '@/app/api/error-items/[id]/mastery/route';
 import { DELETE as DELETE_ITEM } from '@/app/api/error-items/[id]/delete/route';
-import { getServerSession } from 'next-auth';
 
 describe('/api/error-items', () => {
     const mockUser = {
         id: 'user-123',
         email: 'user@example.com',
         name: 'Test User',
+        role: 'user',
+        isActive: true,
+        mustChangePassword: false,
         educationStage: 'junior_high',
         enrollmentYear: 2024,
     };
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.mockGetCurrentUser.mockResolvedValue({ ok: true, user: mockUser });
         mocks.mockPrismaUser.findUnique.mockResolvedValue(mockUser);
-        vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
 
         // Default: subject not found (handle null case)
         mocks.mockPrismaSubject.findUnique.mockResolvedValue(null);
@@ -108,6 +111,15 @@ describe('/api/error-items', () => {
             id: `tag-new-${Date.now()}`,
             ...args.data,
         }));
+
+        // Default: batch lookup returns existing tags by name (used by batched tag handling)
+        mocks.mockPrismaKnowledgeTag.findMany.mockImplementation(async (args: any) => {
+            const names: string[] = args?.where?.name?.in || [];
+            return names.map((name) => ({ id: `tag-${name}`, name, subject: 'math', isSystem: false }));
+        });
+
+        // Default: batch create succeeds
+        mocks.mockPrismaKnowledgeTag.createMany.mockResolvedValue({ count: 0 });
 
         // Default: errorItem.findFirst returns null (no duplicate found)
         mocks.mockPrismaErrorItem.findFirst.mockResolvedValue(null);
@@ -211,8 +223,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该拒绝未登录用户创建错题', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
-            mocks.mockPrismaUser.findFirst.mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/error-items', {
                 method: 'POST',
@@ -590,13 +601,13 @@ describe('/api/error-items', () => {
 
     describe('PATCH /api/error-items/[id]/notes (更新笔记)', () => {
         // 归属检查里 findUnique 的 mock：需要返回属于"当前用户"的 item
-        const OWNED_ITEM = { id: 'error-item-1', userId: 'user-1' };
+        const OWNED_ITEM = { id: 'error-item-1', userId: 'user-123' };
 
         it('应该成功更新用户笔记', async () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             const existingItem = {
                 id: 'error-item-1',
-                userId: 'user-1',
+                userId: 'user-123',
                 userNotes: '',
             };
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
@@ -621,7 +632,7 @@ describe('/api/error-items', () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             const existingItem = {
                 id: 'error-item-1',
-                userId: 'user-1',
+                userId: 'user-123',
                 userNotes: '旧笔记内容',
             };
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
@@ -647,7 +658,7 @@ describe('/api/error-items', () => {
             mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
                 id: 'error-item-1',
-                userId: 'user-1',
+                userId: 'user-123',
                 userNotes: longNote,
             });
 
@@ -797,7 +808,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/error-items/error-item-1/mastery', {
                 method: 'PATCH',
@@ -894,8 +905,7 @@ describe('/api/error-items', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
-            mocks.mockPrismaUser.findFirst.mockResolvedValue(null);
+            mocks.mockGetCurrentUser.mockResolvedValue({ ok: false, response: unauthorized("Authentication required") });
 
             const request = new Request('http://localhost/api/error-items/error-item-1/delete', {
                 method: 'DELETE',

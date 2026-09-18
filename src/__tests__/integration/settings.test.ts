@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
             baseUrl: '',
             model: 'gemini-2.5-flash',
         },
+        azure: {
+            apiKey: '',
+            baseUrl: '',
+            model: '',
+        },
         prompts: {
             analyze: '',
             similar: '',
@@ -39,6 +44,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/config', () => ({
     getAppConfig: mocks.mockGetAppConfig,
     updateAppConfig: mocks.mockUpdateAppConfig,
+    // DNS 级 SSRF 校验：测试环境直接放行
+    validateBaseUrlWithDns: vi.fn(async () => ({ ok: true })),
     getMaskedAppConfig: vi.fn(() => ({
         ...mocks.mockGetAppConfig(),
         openai: {

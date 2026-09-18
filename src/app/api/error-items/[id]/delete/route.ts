@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, forbidden, notFound, internalError } from "@/lib/api-errors";
+import { forbidden, notFound, internalError } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
+import { deleteImage } from "@/lib/image-storage";
 
 const logger = createLogger('api:error-items:delete');
 
@@ -12,23 +12,15 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
+    const user = auth.user;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
-
         // Verify ownership before deletion
         const errorItem = await prisma.errorItem.findUnique({
             where: { id: id },
+            select: { id: true, userId: true, imageStorageKey: true },
         });
 
         if (!errorItem) {
@@ -43,6 +35,9 @@ export async function DELETE(
         await prisma.errorItem.delete({
             where: { id: id },
         });
+
+        // 清掉落盘图片（失败不影响删除结果）
+        deleteImage(errorItem.imageStorageKey);
 
         return NextResponse.json({ message: "Deleted successfully" });
     } catch (error) {

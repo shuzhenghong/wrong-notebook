@@ -28,6 +28,12 @@ vi.mock('@/lib/config', () => ({
     getAppConfig: mocks.mockGetAppConfig,
 }));
 
+// Mock rate-limit：避免连续测试请求触发 429
+vi.mock('@/lib/rate-limit', () => ({
+    rateLimit: vi.fn(() => ({ ok: true, remaining: 99, retryAfterSeconds: 0 })),
+    getClientIp: vi.fn(() => '127.0.0.1'),
+}));
+
 // Mock bcryptjs
 vi.mock('bcryptjs', () => ({
     hash: vi.fn((password: string) => Promise.resolve(`hashed_${password}`)),

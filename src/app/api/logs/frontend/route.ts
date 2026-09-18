@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { getCurrentUser } from '@/lib/server-auth';
-import { badRequest } from '@/lib/api-errors';
+import { badRequest, tooManyRequests } from '@/lib/api-errors';
+import { rateLimit } from '@/lib/rate-limit';
 
 const logger = createLogger('frontend-logs');
 
 export const runtime = 'nodejs';
+
+// 每用户每分钟最多 20 批日志，避免前端异常循环把日志打爆
+const LOG_RATE_LIMIT = 20;
+const LOG_RATE_WINDOW_MS = 60_000;
 
 // 单条日志最大长度 / 批量条数 — 防止日志投毒
 const MAX_LOG_ENTRIES = 50;
@@ -36,6 +41,11 @@ interface BatchLogRequest {
 export async function POST(request: NextRequest) {
     const auth = await getCurrentUser();
     if (!auth.ok) return auth.response;
+
+    const limitResult = rateLimit(`logs:${auth.user.id}`, LOG_RATE_LIMIT, LOG_RATE_WINDOW_MS);
+    if (!limitResult.ok) {
+        return tooManyRequests(limitResult.retryAfterSeconds);
+    }
 
     try {
         const body = await request.json();

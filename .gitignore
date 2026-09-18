@@ -69,3 +69,17 @@ upload_test_output*.txt
 # data
 /data/
 .next-prebuilt/
+
+# 备份与落盘图片（运行时数据，不入库）
+/data/backups/
+/data/images/
+/backups/
+*.db-wal
+*.db-shm
+
+# AI 工具产物 / 临时分享包
+/.trae-html-share-packages/
+/.uploads/
+/.cursorrulers/
+*.patch
+openclaw-integration.patch

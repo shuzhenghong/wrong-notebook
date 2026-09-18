@@ -49,8 +49,8 @@ describe('middleware', () => {
             const req = new NextRequest('http://localhost:3000/login');
             const response = await middleware(req);
 
-            // 返回 null 表示不拦截
-            expect(response).toBeNull();
+            // 放行：middleware 返回 next()，不会再产生重定向（早期实现返回 null）
+            expect(response?.headers?.get('location') ?? null).toBeNull();
         });
 
         it('应该允许未认证用户访问注册页', async () => {
@@ -59,7 +59,9 @@ describe('middleware', () => {
             const req = new NextRequest('http://localhost:3000/register');
             const response = await middleware(req);
 
-            expect(response).toBeNull();
+            // 放行 = 返回非重定向的 NextResponse（不再是旧约定的 null）
+            expect(response).not.toBeNull();
+            expect(response?.headers.get('location')).toBeNull();
         });
 
         it('应该保留查询参数在 callbackUrl 中', async () => {

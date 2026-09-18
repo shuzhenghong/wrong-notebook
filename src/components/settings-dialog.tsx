@@ -302,8 +302,13 @@ export function SettingsDialog() {
 
         setSystemResetting(true);
         try {
-            await apiClient.post("/api/admin/system-reset", {});
+            const result = await apiClient.post<{ backup?: string | null }>("/api/admin/system-reset", {
+                confirm: "DELETE ALL DATA",
+            });
             alert(t.settings?.clearSuccess || "Success - System Reset Complete");
+            if (result?.backup) {
+                console.info('[SettingsDialog] Pre-reset backup saved as', result.backup);
+            }
             setOpen(false);
             window.location.reload();
         } catch (error) {

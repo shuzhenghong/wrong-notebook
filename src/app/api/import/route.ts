@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError, badRequest, forbidden } from "@/lib/api-errors";
+import { internalError, badRequest, forbidden } from "@/lib/api-errors";
+import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:import');
@@ -94,25 +93,16 @@ function safeMasteryLevel(val: unknown): number {
 }
 
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
-    if (!session?.user?.email) {
-        return unauthorized("Not authenticated");
-    }
-
-    const user = await prisma.user.findUnique({
-        where: { email: session.user.email },
-    });
-
-    if (!user) {
-        return unauthorized("User not found");
-    }
+    const user = auth.user;
 
     const { searchParams } = new URL(req.url);
     const importAll = searchParams.get('all') === 'true';
 
     // 只有管理员可以导入全部数据
-    if (importAll && (session.user as any).role !== 'admin') {
+    if (importAll && user.role !== 'admin') {
         return forbidden("Admin role required");
     }
 

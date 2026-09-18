@@ -6,11 +6,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use vi.hoisted to ensure mocks are initialized before module imports
 const mocks = vi.hoisted(() => ({
-    mockPrismaUser: {
-        findUnique: vi.fn(),
-        findFirst: vi.fn(),
-        create: vi.fn(),
-    },
     mockPrismaSubject: {
         findMany: vi.fn(),
         findUnique: vi.fn(),
@@ -25,12 +20,12 @@ const mocks = vi.hoisted(() => ({
         },
         expires: '2025-12-31',
     },
+    mockGetCurrentUser: vi.fn(),
 }));
 
 // Mock Prisma client
 vi.mock('@/lib/prisma', () => ({
     prisma: {
-        user: mocks.mockPrismaUser,
         subject: mocks.mockPrismaSubject,
     },
 }));
@@ -44,23 +39,30 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: 路由统一通过 getCurrentUser 鉴权
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: mocks.mockGetCurrentUser,
+}));
+
 // Import after mocks
 import { GET, POST } from '@/app/api/notebooks/route';
 import { GET as GET_NOTEBOOK, PUT, DELETE } from '@/app/api/notebooks/[id]/route';
-import { getServerSession } from 'next-auth';
 
 describe('/api/notebooks', () => {
     const mockUser = {
         id: 'user-123',
         email: 'user@example.com',
         name: 'Test User',
+        role: 'user',
+        isActive: true,
+        mustChangePassword: false,
+        educationStage: 'junior_high',
+        enrollmentYear: 2024,
     };
 
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.mockPrismaUser.findUnique.mockResolvedValue(mockUser);
-        mocks.mockPrismaUser.findFirst.mockResolvedValue(mockUser);
-        vi.mocked(getServerSession).mockResolvedValue(mocks.mockSession);
+        mocks.mockGetCurrentUser.mockResolvedValue({ ok: true, user: mockUser });
     });
 
     describe('GET /api/notebooks (获取所有错题本)', () => {
