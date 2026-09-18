@@ -312,6 +312,7 @@ export default function AddErrorPage() {
                 mistakeStatus: (result.mistakeStatus as any) || "unknown",
                 subject: "数学",
                 requiresImage: false,
+                geogebraSuitable: false,
             };
 
             setCurrentImage(null);

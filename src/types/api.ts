@@ -59,6 +59,10 @@ export interface ErrorItem {
     mistakeAnalysis?: string | null;
     mistakeStatus?: 'not_attempted' | 'wrong_attempt' | 'unknown' | string | null;
     knowledgePoints?: string | null;
+    geogebraCommands?: string | null;
+    geogebraSuitable?: boolean | null;
+    referenceImageUrl?: string | null;
+    wrongAnswerImageUrl?: string | null;
 
     source?: string | null;
     errorType?: string | null;

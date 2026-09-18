@@ -139,6 +139,16 @@ export function deleteImage(storageKey: string | null | undefined): void {
     }
 }
 
+/** 从 `/api/images/<storageKey>` 形式的 URL 提取 storageKey 并删除（用于附加图清理）。 */
+export function deleteImageByUrl(url: string | null | undefined): void {
+    if (!url) return;
+    const prefix = '/api/images/';
+    const idx = url.indexOf(prefix);
+    if (idx === -1) return;
+    const key = url.slice(idx + prefix.length).replace(/^\/+/, '');
+    deleteImage(key);
+}
+
 /** 删除某个用户的全部落盘图片（清空错题本、删除账号时使用）。 */
 export function deleteUserImages(userId: string): void {
     if (!userId || userId.includes('..') || userId.includes('/') || userId.includes('\\')) return;

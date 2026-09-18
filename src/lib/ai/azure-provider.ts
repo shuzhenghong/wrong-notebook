@@ -88,6 +88,7 @@ export class AzureOpenAIProvider implements AIService {
         const subjectRaw = this.extractTag(text, "subject");
         const knowledgePointsRaw = this.extractTag(text, "knowledge_points");
         const requiresImageRaw = this.extractTag(text, "requires_image");
+        const geogebraSuitableRaw = this.extractTag(text, "geogebra_suitable");
         const wrongAnswerText = this.extractTag(text, "wrong_answer_text") || "";
         const mistakeAnalysis = this.extractTag(text, "mistake_analysis") || "";
         const mistakeStatusRaw = this.extractTag(text, "mistake_status");
@@ -113,6 +114,7 @@ export class AzureOpenAIProvider implements AIService {
 
         // Process requiresImage
         const requiresImage = requiresImageRaw?.toLowerCase().trim() === 'true';
+        const geogebraSuitable = geogebraSuitableRaw?.toLowerCase().trim() === 'true';
         const mistakeStatus = normalizeMistakeStatusForSave(mistakeStatusRaw, wrongAnswerText);
 
         // Construct Result
@@ -125,7 +127,8 @@ export class AzureOpenAIProvider implements AIService {
             mistakeStatus,
             subject,
             knowledgePoints,
-            requiresImage
+            requiresImage,
+            geogebraSuitable
         };
 
         // Final Schema Validation

@@ -100,6 +100,11 @@ model ErrorItem {
   mistakeStatus    String? // not_attempted, wrong_attempt, unknown
   knowledgePoints  String? // [DEPRECATED] JSON string - kept for migration only
   geogebraCommands String? // GeoGebra commands for interactive demo (JSON or newline-separated)
+  geogebraSuitable Boolean? // AI 判断该题是否适合用 GeoGebra 动态演示（几何/函数题等）
+
+  // 多图支持：题目主图之外，可附加解题过程图 / 学生作答图
+  referenceImageUrl String? // 参考图 / 解题过程图 URL（落盘后为 /api/images/<key>）
+  wrongAnswerImageUrl String? // 学生作答图 URL（前端详情页已支持展示）
 
   // New: many-to-many relation with KnowledgeTag
   tags             KnowledgeTag[]

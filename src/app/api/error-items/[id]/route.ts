@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/server-auth";
 import { createLogger } from "@/lib/logger";
 import { findParentTagIdForGrade } from "@/lib/tag-recognition";
 import { normalizeMistakeStatusForSave } from "@/lib/mistake-status";
+import { storeImage, isInlineImage, deleteImageByUrl } from "@/lib/image-storage";
 
 const logger = createLogger('api:error-items:id');
 
@@ -58,7 +59,7 @@ export async function PUT(
         const user = auth.user;
 
         const body = await req.json();
-        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, subjectId,  wrongAnswerText, mistakeAnalysis, mistakeStatus, geogebraCommands } = body;
+        const { knowledgePoints, gradeSemester, paperLevel, questionText, answerText, analysis, subjectId,  wrongAnswerText, mistakeAnalysis, mistakeStatus, geogebraCommands, geogebraSuitable, referenceImageUrl, wrongAnswerImageUrl } = body;
 
         const errorItem = await prisma.errorItem.findUnique({
             where: { id },
@@ -99,6 +100,37 @@ export async function PUT(
             );
         }
         if (geogebraCommands !== undefined) updateData.geogebraCommands = geogebraCommands || null;
+        if (geogebraSuitable !== undefined) updateData.geogebraSuitable = geogebraSuitable ?? null;
+
+        // 附加图（参考图 / 学生作答图）：内联 base64 落盘；显式 url 或 null 原样写入；旧文件按需清理
+        if (referenceImageUrl !== undefined) {
+            if (referenceImageUrl && isInlineImage(referenceImageUrl)) {
+                const stored = storeImage(user.id, `${id}__ref`, referenceImageUrl);
+                if (stored) {
+                    if (errorItem.referenceImageUrl) deleteImageByUrl(errorItem.referenceImageUrl);
+                    updateData.referenceImageUrl = stored.url;
+                }
+            } else {
+                if (errorItem.referenceImageUrl && errorItem.referenceImageUrl !== referenceImageUrl) {
+                    deleteImageByUrl(errorItem.referenceImageUrl);
+                }
+                updateData.referenceImageUrl = referenceImageUrl || null;
+            }
+        }
+        if (wrongAnswerImageUrl !== undefined) {
+            if (wrongAnswerImageUrl && isInlineImage(wrongAnswerImageUrl)) {
+                const stored = storeImage(user.id, `${id}__wrong`, wrongAnswerImageUrl);
+                if (stored) {
+                    if (errorItem.wrongAnswerImageUrl) deleteImageByUrl(errorItem.wrongAnswerImageUrl);
+                    updateData.wrongAnswerImageUrl = stored.url;
+                }
+            } else {
+                if (errorItem.wrongAnswerImageUrl && errorItem.wrongAnswerImageUrl !== wrongAnswerImageUrl) {
+                    deleteImageByUrl(errorItem.wrongAnswerImageUrl);
+                }
+                updateData.wrongAnswerImageUrl = wrongAnswerImageUrl || null;
+            }
+        }
 
         // 处理 knowledgePoints (标签)
         if (knowledgePoints !== undefined) {

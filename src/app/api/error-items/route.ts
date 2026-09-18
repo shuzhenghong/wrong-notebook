@@ -29,6 +29,9 @@ const createErrorItemSchema = z.object({
     gradeSemester: z.string().max(100).optional(),
     paperLevel: z.string().max(50).optional(),
     geogebraCommands: z.string().max(20000).optional().nullable(),
+    geogebraSuitable: z.boolean().optional(),
+    referenceImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional(),
+    wrongAnswerImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional(),
 });
 
 export async function POST(req: Request) {
@@ -60,6 +63,9 @@ export async function POST(req: Request) {
             gradeSemester,
             paperLevel,
             geogebraCommands,
+            geogebraSuitable,
+            referenceImageUrl: referenceImageUrlRaw,
+            wrongAnswerImageUrl: wrongAnswerImageUrlRaw,
         } = parsed.data;
 
         // 记录请求参数（不记录完整图片数据）
@@ -216,6 +222,24 @@ export async function POST(req: Request) {
             }
         }
 
+        // 附加图落盘：参考图 / 学生作答图（复用同一套 magic-byte 校验与归属目录）
+        let referenceImageUrl: string | null = null;
+        let wrongAnswerImageUrl: string | null = null;
+        if (referenceImageUrlRaw && isInlineImage(referenceImageUrlRaw)) {
+            const stored = storeImage(user.id, `${newItemId}__ref`, referenceImageUrlRaw);
+            if (stored) {
+                referenceImageUrl = stored.url;
+                logger.info({ storageKey: stored.storageKey }, 'Reference image stored on disk');
+            }
+        }
+        if (wrongAnswerImageUrlRaw && isInlineImage(wrongAnswerImageUrlRaw)) {
+            const stored = storeImage(user.id, `${newItemId}__wrong`, wrongAnswerImageUrlRaw);
+            if (stored) {
+                wrongAnswerImageUrl = stored.url;
+                logger.info({ storageKey: stored.storageKey }, 'Wrong-answer image stored on disk');
+            }
+        }
+
         // 创建错题记录
         try {
             const errorItem = await prisma.errorItem.create({
@@ -236,6 +260,9 @@ export async function POST(req: Request) {
                     gradeSemester: finalGradeSemester,
                     paperLevel: paperLevel,
                     geogebraCommands: geogebraCommands || null,
+                    geogebraSuitable: geogebraSuitable ?? null,
+                    referenceImageUrl,
+                    wrongAnswerImageUrl,
                     masteryLevel: 0,
                     tags: {
                         connect: tagConnections,

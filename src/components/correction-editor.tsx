@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Save, RefreshCw, Loader2, Box } from "lucide-react";
+import { Save, RefreshCw, Loader2, Box, ImageIcon, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { frontendLogger } from "@/lib/frontend-logger";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
@@ -23,11 +23,13 @@ import type { ReanswerQuestionResult } from "@/lib/ai/types";
 import { buildReanswerRequestBody } from "@/lib/reanswer-request";
 import { GeogebraDemo } from "@/components/geogebra-demo";
 
-interface ParsedQuestionWithSubject extends ParsedQuestion {
+export interface ParsedQuestionWithSubject extends ParsedQuestion {
     subjectId?: string;
     gradeSemester?: string;
     paperLevel?: string;
     geogebraCommands?: string;
+    referenceImageUrl?: string | null;
+    wrongAnswerImageUrl?: string | null;
 }
 
 interface CorrectionEditorProps {
@@ -61,6 +63,16 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
     const [isSaving, setIsSaving] = useState(false);
     const [isAnalyzingGeogebra, setIsAnalyzingGeogebra] = useState(false);
     const [geogebraError, setGeogebraError] = useState<string | null>(null);
+    const [referenceImage, setReferenceImage] = useState<string | null>(null);
+    const [wrongAnswerImage, setWrongAnswerImage] = useState<string | null>(null);
+
+    // 把用户选择的附加图读成 base64（与主图走同一套落盘校验）
+    const readImageAsBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 
     const [educationStage, setEducationStage] = useState<string | undefined>(undefined);
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -213,6 +225,8 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             try {
                                 await onSave({
                                     ...data,
+                                    referenceImageUrl: referenceImage,
+                                    wrongAnswerImageUrl: wrongAnswerImage,
                                     mistakeStatus: normalizeMistakeStatusForSave(
                                         data.mistakeStatus,
                                         data.wrongAnswerText
@@ -244,6 +258,36 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                             </CardContent>
                         </Card>
                     )}
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="text-base">附加图片（可选）</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="space-y-2">
+                                <Label className="flex items-center gap-2"><ImageIcon className="h-4 w-4" />参考 / 解题过程图</Label>
+                                {referenceImage ? (
+                                    <div className="relative inline-block">
+                                        <img src={referenceImage} alt="参考图" className="max-h-48 rounded-md border" />
+                                        <button type="button" onClick={() => setReferenceImage(null)} className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 text-white"><X className="h-3 w-3" /></button>
+                                    </div>
+                                ) : (
+                                    <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setReferenceImage(await readImageAsBase64(f)); }} className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-white" />
+                                )}
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="flex items-center gap-2"><ImageIcon className="h-4 w-4" />学生作答图</Label>
+                                {wrongAnswerImage ? (
+                                    <div className="relative inline-block">
+                                        <img src={wrongAnswerImage} alt="作答图" className="max-h-48 rounded-md border" />
+                                        <button type="button" onClick={() => setWrongAnswerImage(null)} className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 text-white"><X className="h-3 w-3" /></button>
+                                    </div>
+                                ) : (
+                                    <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setWrongAnswerImage(await readImageAsBase64(f)); }} className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-white" />
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
 
                     <div className="space-y-2">
                         <Label>{t.editor.selectNotebook || "Select Notebook"}</Label>

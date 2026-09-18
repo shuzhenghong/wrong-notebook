@@ -374,6 +374,7 @@ function HomeContent() {
                 mistakeStatus: (result.mistakeStatus as any) || "unknown",
                 subject: "数学", // Default, will be overridden by notebook selection
                 requiresImage: false,
+                geogebraSuitable: false,
             };
 
             setCurrentImage(null); // No image for text input

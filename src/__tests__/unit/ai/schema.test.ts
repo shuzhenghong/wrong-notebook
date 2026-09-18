@@ -116,6 +116,35 @@ describe('ParsedQuestionSchema 验证', () => {
         });
     });
 
+    describe('GeoGebra 适配性字段验证', () => {
+        it('geogebraSuitable 缺失时默认为 false', () => {
+            const result = ParsedQuestionSchema.safeParse(validBaseQuestion);
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.data.geogebraSuitable).toBe(false);
+            }
+        });
+
+        it('应该接受 geogebraSuitable 为 true 的数据', () => {
+            const result = ParsedQuestionSchema.safeParse({
+                ...validBaseQuestion,
+                geogebraSuitable: true,
+            });
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.data.geogebraSuitable).toBe(true);
+            }
+        });
+
+        it('requiresImage 缺失时默认为 false（回归保护）', () => {
+            const result = ParsedQuestionSchema.safeParse(validBaseQuestion);
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.data.requiresImage).toBe(false);
+            }
+        });
+    });
+
     describe('safeParseParsedQuestion', () => {
         it('应该安全解析有效数据', () => {
             const result = safeParseParsedQuestion(validBaseQuestion);
