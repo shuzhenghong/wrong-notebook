@@ -38,5 +38,13 @@ export async function register() {
 
         const { setupGlobalProxy } = await import('./lib/global-proxy');
         setupGlobalProxy();
+
+        // 本地 OCR 引擎预热：后台加载 PP-OCRv4 模型并空跑一次，
+        // 首次用户请求不再付 ~1.5s 冷启动。OCR_WARMUP=false 可关闭。
+        if (process.env.OCR_WARMUP !== 'false' && process.env.VITEST !== 'true') {
+            import('./lib/ocr-local')
+                .then(({ warmupLocalOcr }) => warmupLocalOcr())
+                .catch(() => { /* 预热失败静默，首次请求时会正常重试 */ });
+        }
     }
 }

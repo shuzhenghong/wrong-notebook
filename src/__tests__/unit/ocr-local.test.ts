@@ -53,10 +53,48 @@ describe('lib/ocr-local', () => {
 
         const { recognizeImageLocal } = await loadModule();
         await recognizeImageLocal(Buffer.alloc(4));
-        await recognizeImageLocal(Buffer.alloc(4));
+        await recognizeImageLocal(Buffer.alloc(8)); // 不同内容，避开结果缓存
 
         expect(mocks.mockCreate).toHaveBeenCalledTimes(1);
         expect(instance.detect).toHaveBeenCalledTimes(2);
+    });
+
+    it('结果缓存：相同图片 5 分钟内直接返回，不重复推理', async () => {
+        const instance = { detect: vi.fn().mockResolvedValue([{ text: 'x', mean: 0.9 }]) };
+        mocks.mockCreate.mockResolvedValue(instance);
+
+        const { recognizeImageLocal } = await loadModule();
+        const buf = Buffer.from('same-image-jpeg');
+        const first = await recognizeImageLocal(buf);
+        const second = await recognizeImageLocal(Buffer.from('same-image-jpeg'));
+
+        expect(instance.detect).toHaveBeenCalledTimes(1);
+        expect(second).toEqual(first);
+    });
+
+    it('结果缓存：容量上限 50，淘汰最旧条目后重新推理', async () => {
+        const instance = { detect: vi.fn().mockResolvedValue([{ text: 'x', mean: 0.9 }]) };
+        mocks.mockCreate.mockResolvedValue(instance);
+
+        const { recognizeImageLocal } = await loadModule();
+        const bufs = Array.from({ length: 51 }, (_, i) => Buffer.from([i]));
+        for (const b of bufs) await recognizeImageLocal(b);
+        expect(instance.detect).toHaveBeenCalledTimes(51);
+
+        // 最旧的第 1 张被淘汰 → 再识别会重新推理；第 2 张仍在缓存
+        await recognizeImageLocal(bufs[0]);
+        await recognizeImageLocal(bufs[1]);
+        expect(instance.detect).toHaveBeenCalledTimes(53);
+    });
+
+    it('warmupLocalOcr：静默完成预热，不抛错', async () => {
+        const instance = { detect: vi.fn().mockResolvedValue([]) };
+        mocks.mockCreate.mockResolvedValue(instance);
+
+        const { warmupLocalOcr } = await loadModule();
+        await expect(warmupLocalOcr()).resolves.toBeUndefined();
+        expect(mocks.mockCreate).toHaveBeenCalledTimes(1);
+        expect(instance.detect).toHaveBeenCalledTimes(1);
     });
 
     it('detect 返回 null 时得到空结果', async () => {
