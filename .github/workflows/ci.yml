@@ -164,13 +164,14 @@ jobs:
           retention-days: 30
 
   # ============================================
-  # Docker 构建（仅 tag push）
+  # Docker 构建（main 推送自动构建 latest；tag 推送构建版本标签）
   # ============================================
   docker-build:
     runs-on: ubuntu-latest
     name: Docker Build & Push
-    # 只在 tag 推送时构建镜像
-    if: startsWith(github.ref, 'refs/tags/')
+    # main 分支每次 push 自动构建 latest + sha 镜像；tag 推送构建语义化版本标签（非预发布额外打 latest）
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    needs: build-check
     permissions:
       contents: read
       packages: write
@@ -195,8 +196,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
-            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-')) }}
+            type=sha,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up QEMU (Enable multi-arch)
         uses: docker/setup-qemu-action@v3
