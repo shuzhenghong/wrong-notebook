@@ -1,9 +1,9 @@
-FROM node:22-alpine AS base
+# 注意：本地 OCR（onnxruntime-node）只提供 glibc 预编译二进制，必须用 Debian 基础镜像，
+# 不能使用 alpine（musl）
+FROM node:22-slim AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
@@ -17,7 +17,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Generate Prisma Client and Seed Database
 # We temporarily set DATABASE_URL to a local file for the build process to generate the file
@@ -47,8 +49,10 @@ ENV NODE_ENV=production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install dependencies and create user
-RUN apk add --no-cache su-exec openssl \
+# Install dependencies and create user (gosu 是 su-exec 的 Debian 等价物)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
     && addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
 
@@ -62,6 +66,14 @@ COPY --from=builder /app/public ./public
 # Automatically leverage output traces to reduce image size
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# 本地 OCR 原生依赖：确保 onnxruntime 二进制与 PP-OCRv4 模型完整进入镜像
+# （standalone 文件追踪对动态 import 的原生包可能遗漏，这里显式覆盖补齐）
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@gutenye ./node_modules/@gutenye
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-node ./node_modules/onnxruntime-node
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-common ./node_modules/onnxruntime-common
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
 
 # Copy Prisma schema and migrations for runtime usage if needed (e.g. for migrations)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma

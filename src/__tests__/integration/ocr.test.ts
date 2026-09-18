@@ -1,6 +1,7 @@
 /**
  * /api/ocr API 集成测试
- * 本地 OCR 接口：鉴权、限流、图片输入校验（key 归属 / base64 magic-byte）与错误映射
+ * 本地 OCR 接口：鉴权、限流、图片输入校验（key 归属 / base64 magic-byte）、
+ * 双引擎选择（默认内置引擎 / OCR_BASE_URL 配置时走 sidecar）与错误映射
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     mockRateLimit: vi.fn(),
     mockIsLocalOcrEnabled: vi.fn(),
     mockRecognizeImage: vi.fn(),
+    mockRecognizeImageLocal: vi.fn(),
     mockReadImage: vi.fn(),
     mockDecodeValidatedImage: vi.fn(),
 }));
@@ -21,7 +23,7 @@ vi.mock('@/lib/rate-limit', () => ({
     rateLimit: mocks.mockRateLimit,
 }));
 
-// 保留 OcrError 真实实现，仅 mock 网络相关函数
+// 保留 OcrError 真实实现，仅 mock 两个引擎入口
 vi.mock('@/lib/ocr', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/ocr')>();
     return {
@@ -30,6 +32,10 @@ vi.mock('@/lib/ocr', async (importOriginal) => {
         recognizeImage: mocks.mockRecognizeImage,
     };
 });
+
+vi.mock('@/lib/ocr-local', () => ({
+    recognizeImageLocal: mocks.mockRecognizeImageLocal,
+}));
 
 vi.mock('@/lib/image-storage', () => ({
     readImage: mocks.mockReadImage,
@@ -64,11 +70,17 @@ describe('/api/ocr', () => {
         vi.clearAllMocks();
         mocks.mockGetCurrentUser.mockResolvedValue({ ok: true, user: AUTHED_USER });
         mocks.mockRateLimit.mockReturnValue({ ok: true, retryAfterSeconds: 60 });
-        mocks.mockIsLocalOcrEnabled.mockReturnValue(true);
-        mocks.mockRecognizeImage.mockResolvedValue({
+        // 默认未配置 OCR_BASE_URL：走内置引擎
+        mocks.mockIsLocalOcrEnabled.mockReturnValue(false);
+        mocks.mockRecognizeImageLocal.mockResolvedValue({
             text: '题目文本',
             lines: [{ text: '题目文本', score: 0.95 }],
-            requestId: 'req-1',
+            requestId: null,
+        });
+        mocks.mockRecognizeImage.mockResolvedValue({
+            text: 'sidecar 文本',
+            lines: [{ text: 'sidecar 文本', score: 0.9 }],
+            requestId: 'req-sidecar',
         });
     });
 
@@ -83,14 +95,6 @@ describe('/api/ocr', () => {
         const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
         expect(res.status).toBe(429);
         expect(res.headers.get('Retry-After')).toBe('30');
-    });
-
-    it('未配置本地 OCR 时返回 503 OCR_NOT_CONFIGURED', async () => {
-        mocks.mockIsLocalOcrEnabled.mockReturnValueOnce(false);
-        const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
-        expect(res.status).toBe(503);
-        const body = await res.json();
-        expect(body.message).toBe('OCR_NOT_CONFIGURED');
     });
 
     it('缺少 key 与 imageBase64 时返回 400', async () => {
@@ -133,15 +137,28 @@ describe('/api/ocr', () => {
         expect(res.status).toBe(400);
     });
 
-    it('成功：base64 输入返回识别文本', async () => {
+    it('默认走内置引擎：base64 输入返回识别文本', async () => {
         mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
         const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
         expect(res.status).toBe(200);
         const body = await res.json();
         expect(body.text).toBe('题目文本');
         expect(body.lineCount).toBe(1);
-        expect(body.requestId).toBe('req-1');
+        expect(body.requestId).toBeNull();
+        expect(mocks.mockRecognizeImageLocal).toHaveBeenCalledWith(expect.any(Buffer));
+        expect(mocks.mockRecognizeImage).not.toHaveBeenCalled();
+    });
+
+    it('配置 OCR_BASE_URL 时走 sidecar 引擎', async () => {
+        mocks.mockIsLocalOcrEnabled.mockReturnValue(true);
+        mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
+        const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.text).toBe('sidecar 文本');
+        expect(body.requestId).toBe('req-sidecar');
         expect(mocks.mockRecognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/png');
+        expect(mocks.mockRecognizeImageLocal).not.toHaveBeenCalled();
     });
 
     it('成功：key 输入读取落盘图片', async () => {
@@ -151,29 +168,31 @@ describe('/api/ocr', () => {
         const body = await res.json();
         expect(body.text).toBe('题目文本');
         expect(mocks.mockReadImage).toHaveBeenCalledWith('user-1/item.jpg');
-        expect(mocks.mockRecognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/jpeg');
+        expect(mocks.mockRecognizeImageLocal).toHaveBeenCalledWith(expect.any(Buffer));
     });
 
-    it('OCR_BUSY 映射为 429', async () => {
+    it('内置引擎抛错（非 OcrError）兜底返回 502', async () => {
+        mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
+        mocks.mockRecognizeImageLocal.mockRejectedValueOnce(new Error('onnxruntime crashed'));
+        const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
+        expect(res.status).toBe(502);
+        const body = await res.json();
+        expect(body.message).toBe('OCR_UNAVAILABLE');
+    });
+
+    it('sidecar 模式下 OCR_BUSY 映射为 429', async () => {
+        mocks.mockIsLocalOcrEnabled.mockReturnValue(true);
         mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
         mocks.mockRecognizeImage.mockRejectedValueOnce(new OcrError('OCR_BUSY'));
         const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
         expect(res.status).toBe(429);
     });
 
-    it('OCR_TIMEOUT 映射为 504', async () => {
+    it('sidecar 模式下 OCR_TIMEOUT 映射为 504', async () => {
+        mocks.mockIsLocalOcrEnabled.mockReturnValue(true);
         mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
         mocks.mockRecognizeImage.mockRejectedValueOnce(new OcrError('OCR_TIMEOUT'));
         const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
         expect(res.status).toBe(504);
-    });
-
-    it('未知错误兜底返回 502 OCR_UNAVAILABLE', async () => {
-        mocks.mockDecodeValidatedImage.mockReturnValueOnce({ buffer: Buffer.alloc(12), mimeType: 'image/png' });
-        mocks.mockRecognizeImage.mockRejectedValueOnce(new Error('boom'));
-        const res = await POST(makeRequest({ imageBase64: VALID_IMAGE_B64 }));
-        expect(res.status).toBe(502);
-        const body = await res.json();
-        expect(body.message).toBe('OCR_UNAVAILABLE');
     });
 });

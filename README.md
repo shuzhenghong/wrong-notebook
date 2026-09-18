@@ -231,21 +231,25 @@ npm run dev
 
 ## 🔤 本地 OCR（离线文字提取）
 
-系统支持对接 [lw.PPOCR.OpenCVDNN](https://github.com/lxw112190/lw.PPOCR.OpenCVDNN)（PP-OCRv6 Tiny Chinese，OpenCV DNN 纯 CPU 推理，无需 GPU / Python / Paddle Runtime）实现**本地 OCR**：
+系统内置**进程内本地 OCR**，开箱即用、无需部署任何额外服务：
 
+- 模型：**PP-OCRv4 中文**（检测 + 方向分类 + 识别，中档精度，随 npm 包分发）
+- 推理：`@gutenye/ocr-node` + `onnxruntime-node`，在 Node.js 进程内完成（CPU）
 - 拍照/上传裁剪后，裁剪弹窗中除「AI 解析」外多一个**「提取文字」**按钮；
 - 提取的文字会自动预填到「手动输入」框，可校对后继续 AI 解题（走文字解析通道，不消耗视觉模型额度）；
-- 全程在本机/内网完成，图片不出外网。
-
-**Docker Compose 部署**：`docker-compose.yml` 已内置 `ocr` sidecar 服务（镜像 `ghcr.io/lxw112190/lw.ppocr.opencvdnn:1.1.0`，约 150MB 内存），`docker compose up -d` 即自动启用，无需额外配置。
+- 全程在本机完成，图片不出外网。
 
 **环境变量**：
 
 | 变量 | 说明 | 默认 |
 | :--- | :--- | :--- |
-| `OCR_BASE_URL` | OCR 服务地址；**留空 = 关闭本地 OCR** | Compose 内为 `http://ocr:8787` |
-| `OCR_API_KEY` | OCR 服务端启用 `api_key` 时填写 | 空 |
-| `OCR_TIMEOUT_MS` | 单次请求超时（1000~120000） | `20000` |
+| `OCR_BASE_URL` | 可选。设置后改走独立 OCR 服务；留空 = 使用内置引擎 | 空 |
+| `OCR_API_KEY` | 独立 OCR 服务启用 `api_key` 时填写 | 空 |
+| `OCR_TIMEOUT_MS` | 独立服务单次请求超时（1000~120000） | `20000` |
+
+**可选：独立 OCR 服务**：如果对吞吐有更高要求，可启用 [lw.PPOCR.OpenCVDNN](https://github.com/lxw112190/lw.PPOCR.OpenCVDNN)（OpenCV DNN 纯 CPU C++ 服务）：`docker compose --profile ocr up -d` 并设置 `OCR_BASE_URL=http://ocr:8787`。
+
+> 注意：Dockerfile 已从 alpine 切换到 Debian slim——`onnxruntime-node` 仅提供 glibc 预编译二进制，不支持 musl。本地 OCR 依赖需固定 `onnxruntime-node@1.20.x`（1.30.0 存在 Windows 段错误问题）。
 
 ## 🛠️ 实用脚本
 

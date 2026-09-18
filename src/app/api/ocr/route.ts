@@ -7,8 +7,9 @@
  *   - { imageBase64: "data:...|<base64>" } 直接上传图片（≤8MB，与 /api/analyze 同限）
  * 响应：{ text, lines: [{text, score}], lineCount, requestId }
  *
- * 依赖本地 OCR 服务（lw.PPOCR.OpenCVDNN）：通过 OCR_BASE_URL 启用，
- * 未配置时返回 503 OCR_NOT_CONFIGURED。
+ * 引擎选择：
+ *   - 默认：进程内内置引擎（@gutenye/ocr-node，PP-OCRv4 中文模型，无需部署）
+ *   - 可选：设置 OCR_BASE_URL 后改走独立 OCR 服务（lw.PPOCR.OpenCVDNN sidecar）
  */
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/server-auth";
@@ -16,6 +17,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { badRequest, forbidden, notFound, tooManyRequests, createErrorResponse, ErrorCode, ErrorCodeType } from "@/lib/api-errors";
 import { readImage, decodeValidatedImage } from "@/lib/image-storage";
 import { recognizeImage, isLocalOcrEnabled, OcrError } from "@/lib/ocr";
+import { recognizeImageLocal } from "@/lib/ocr-local";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('api:ocr');
@@ -47,10 +49,6 @@ export async function POST(req: Request) {
     if (!limitResult.ok) {
         logger.warn({ userId: currentUser.id }, 'OCR rate limit exceeded');
         return tooManyRequests(limitResult.retryAfterSeconds);
-    }
-
-    if (!isLocalOcrEnabled()) {
-        return createErrorResponse("OCR_NOT_CONFIGURED", 503, ErrorCode.OPERATION_NOT_ALLOWED);
     }
 
     let body: { key?: unknown; imageBase64?: unknown };
@@ -87,10 +85,17 @@ export async function POST(req: Request) {
         return badRequest("Provide either key or imageBase64");
     }
 
+    // 引擎选择：配置了 OCR_BASE_URL 走独立 sidecar 服务（C++ 推理更快），
+    // 否则使用进程内内置引擎（PP-OCRv4，零部署）
+    const useSidecar = isLocalOcrEnabled();
+
     try {
-        const result = await recognizeImage(buffer, mimeType);
+        const result = useSidecar
+            ? await recognizeImage(buffer, mimeType)
+            : await recognizeImageLocal(buffer);
         logger.info({
             userId: currentUser.id,
+            engine: useSidecar ? 'sidecar' : 'builtin',
             lineCount: result.lines.length,
             requestId: result.requestId,
         }, 'Local OCR completed');
@@ -103,10 +108,11 @@ export async function POST(req: Request) {
     } catch (error: any) {
         if (error instanceof OcrError) {
             const mapped = OCR_STATUS_MAP[error.code];
-            logger.warn({ userId: currentUser.id, code: error.code }, 'Local OCR failed');
+            logger.warn({ userId: currentUser.id, code: error.code, engine: useSidecar ? 'sidecar' : 'builtin' }, 'Local OCR failed');
             return createErrorResponse(error.code, mapped.status, mapped.code);
         }
-        logger.error({ error: error?.message || String(error) }, 'Unexpected OCR error');
+        // 内置引擎加载/推理失败
+        logger.error({ userId: currentUser.id, error: error?.message || String(error) }, 'Unexpected OCR error');
         return createErrorResponse("OCR_UNAVAILABLE", 502, ErrorCode.AI_ERROR);
     }
 }

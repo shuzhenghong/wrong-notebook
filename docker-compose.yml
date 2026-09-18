@@ -15,24 +15,24 @@ services:
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?请在 .env 中设置 NEXTAUTH_SECRET}
       # 首次启动用于创建管理员账号（登录后会被强制要求修改密码）
       - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:?请在 .env 中设置 DEFAULT_ADMIN_PASSWORD}
-      # 本地 OCR 服务（lw.PPOCR.OpenCVDNN）。默认指向下方 ocr 服务；
-      # 不需要本地 OCR 时清空 OCR_BASE_URL 即可（应用内裁剪弹窗将不显示「提取文字」）
-      - OCR_BASE_URL=${OCR_BASE_URL:-http://ocr:8787}
+      # 本地 OCR：默认使用内置引擎（PP-OCRv4 中文模型，进程内推理，无需额外部署）。
+      # 如需切换独立 sidecar 服务（C++ 推理更快），用 `docker compose --profile ocr up -d`
+      # 启动 ocr 服务，并在 .env 中设置 OCR_BASE_URL=http://ocr:8787
+      - OCR_BASE_URL=${OCR_BASE_URL:-}
       - OCR_API_KEY=${OCR_API_KEY:-}
       - OCR_TIMEOUT_MS=${OCR_TIMEOUT_MS:-}
     volumes:
       # Persist the SQLite database
       - ./data:/app/data
       - ./config:/app/config
-    depends_on:
-      ocr:
-        condition: service_healthy
 
-  # 本地 OCR 服务：PP-OCRv6 Tiny Chinese，OpenCV DNN 纯 CPU 推理（约 150MB 内存）
+  # 可选：独立本地 OCR 服务（lw.PPOCR.OpenCVDNN，PP-OCR Tiny，OpenCV DNN 纯 CPU，约 150MB 内存）
+  # 默认不启动；需要时：docker compose --profile ocr up -d 并设置 OCR_BASE_URL=http://ocr:8787
   # 文档：https://github.com/lxw112190/lw.PPOCR.OpenCVDNN
   ocr:
     image: ghcr.io/lxw112190/lw.ppocr.opencvdnn:1.1.0
     container_name: wrong-notebook-ocr
     restart: unless-stopped
+    profiles: ["ocr"]
     volumes:
       - ./data/ocr-logs:/data/logs
