@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,11 +12,19 @@ interface TextInputZoneProps {
     onSubmit: (questionText: string) => Promise<void>;
     isAnalyzing: boolean;
     defaultNotebookName?: string;
+    /** 预填文字（例如本地 OCR 提取结果），变化时同步到输入框 */
+    initialText?: string;
 }
 
-export function TextInputZone({ onSubmit, isAnalyzing, defaultNotebookName }: TextInputZoneProps) {
+export function TextInputZone({ onSubmit, isAnalyzing, defaultNotebookName, initialText }: TextInputZoneProps) {
     const { t } = useLanguage();
     const [questionText, setQuestionText] = useState("");
+
+    useEffect(() => {
+        if (typeof initialText === "string" && initialText) {
+            setQuestionText(initialText);
+        }
+    }, [initialText]);
 
     const handleSubmit = async () => {
         if (!questionText.trim()) return;

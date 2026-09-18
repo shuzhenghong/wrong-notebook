@@ -22,6 +22,7 @@ export const translations = {
             cropper: {
                 title: "Crop Image",
                 hint: "💡 Drag to adjust crop area",
+                ocrButton: "Extract Text (OCR)",
             },
             progress: {
                 compressing: "Compressing image...",
@@ -508,6 +509,13 @@ export const translations = {
             AI_NOT_FOUND: "Resource not found (404). Please check endpoint URL or model name.",
             AI_SERVICE_UNAVAILABLE: "AI service unavailable (503). No available channel.",
             AI_UNKNOWN_ERROR: "Unknown AI error occurred.",
+            OCR_NOT_CONFIGURED: "Local OCR is not configured. Please set OCR_BASE_URL on the server.",
+            OCR_BUSY: "Local OCR is busy, please retry in a moment.",
+            OCR_TIMEOUT: "Local OCR request timed out, please retry.",
+            OCR_UNAVAILABLE: "Local OCR service is unavailable. Please check the OCR service status.",
+            OCR_AUTH_FAILED: "Local OCR authentication failed. Please check OCR_API_KEY.",
+            OCR_BAD_REQUEST: "The image cannot be processed by local OCR.",
+            OCR_RESPONSE_ERROR: "Local OCR did not recognize any text.",
             GENERIC_ERROR: "Failed to generate question.",
             reanswer: {
                 default: "Reanswer failed",
@@ -683,6 +691,7 @@ export const translations = {
             cropper: {
                 title: "裁剪图片",
                 hint: "💡 拖动选框调整裁剪区域",
+                ocrButton: "提取文字",
             },
             progress: {
                 compressing: "正在压缩图片...",
@@ -1168,6 +1177,13 @@ export const translations = {
             AI_NOT_FOUND: "资源不存在 (404)，请检查端点 URL 或模型名称。",
             AI_SERVICE_UNAVAILABLE: "AI 服务不可用 (503)，无可用渠道。",
             AI_UNKNOWN_ERROR: "发生未知 AI 错误。",
+            OCR_NOT_CONFIGURED: "未配置本地 OCR 服务，请在服务器端设置 OCR_BASE_URL。",
+            OCR_BUSY: "本地 OCR 繁忙中，请稍后重试。",
+            OCR_TIMEOUT: "本地 OCR 请求超时，请重试。",
+            OCR_UNAVAILABLE: "本地 OCR 服务不可用，请检查 OCR 服务状态。",
+            OCR_AUTH_FAILED: "本地 OCR 认证失败，请检查 OCR_API_KEY 配置。",
+            OCR_BAD_REQUEST: "该图片无法被本地 OCR 处理。",
+            OCR_RESPONSE_ERROR: "本地 OCR 未识别到文字。",
             GENERIC_ERROR: "生成题目失败，请稍后重试。",
             reanswer: {
                 default: "重新解题失败",

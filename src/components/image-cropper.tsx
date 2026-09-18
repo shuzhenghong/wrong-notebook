@@ -12,6 +12,8 @@ interface ImageCropperProps {
     open: boolean;
     onClose: () => void;
     onCropComplete: (croppedImageBlob: Blob) => void;
+    /** 可选：提供后在确认按钮旁显示「提取文字」按钮，走本地 OCR 文字提取流程 */
+    onOcrComplete?: (croppedImageBlob: Blob) => void;
 }
 
 // Helper to center the crop initially
@@ -35,7 +37,7 @@ function centerAspectCrop(
     )
 }
 
-export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageCropperProps) {
+export function ImageCropper({ imageSrc, open, onClose, onCropComplete, onOcrComplete }: ImageCropperProps) {
     const { t, language } = useLanguage();
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
@@ -97,33 +99,39 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
         });
     };
 
-    const handleConfirm = async () => {
+    const getCroppedBlob = async (): Promise<Blob | null> => {
         if (completedCrop && imgRef.current) {
             try {
-                const croppedBlob = await getCroppedImg(imgRef.current, completedCrop);
-                if (croppedBlob) {
-                    onCropComplete(croppedBlob);
-                }
+                return await getCroppedImg(imgRef.current, completedCrop);
+            } catch (e) {
+                console.error(e);
+                return null;
+            }
+        }
+        // 未选择裁剪区域时回退为整张原图
+        if (imageSrc) {
+            try {
+                const res = await fetch(imageSrc);
+                return await res.blob();
             } catch (e) {
                 console.error(e);
             }
-        } else {
-            // If no crop, just return original? Or force crop?
-            // Let's assume user wants to crop. If they didn't touch it, use current crop state?
-            // If crop is undefined, maybe they want whole image?
-            // For now, let's require a crop or just use the whole image if nothing selected?
-            // Actually, better to just close if they cancel.
-            // If they click confirm but no crop is set (unlikely with initial state), do nothing or alert.
-            if (!completedCrop && imageSrc) {
-                // Fallback: fetch original and return as blob
-                try {
-                    const res = await fetch(imageSrc);
-                    const blob = await res.blob();
-                    onCropComplete(blob);
-                } catch (e) {
-                    console.error(e);
-                }
-            }
+        }
+        return null;
+    };
+
+    const handleConfirm = async () => {
+        const croppedBlob = await getCroppedBlob();
+        if (croppedBlob) {
+            onCropComplete(croppedBlob);
+        }
+    };
+
+    const handleOcr = async () => {
+        if (!onOcrComplete) return;
+        const croppedBlob = await getCroppedBlob();
+        if (croppedBlob) {
+            onOcrComplete(croppedBlob);
         }
     };
 
@@ -160,6 +168,11 @@ export function ImageCropper({ imageSrc, open, onClose, onCropComplete }: ImageC
                             <Button variant="outline" onClick={onClose}>
                                 {t.common.cancel || "Cancel"}
                             </Button>
+                            {onOcrComplete && (
+                                <Button variant="outline" onClick={handleOcr}>
+                                    {t.common.cropper?.ocrButton || "提取文字"}
+                                </Button>
+                            )}
                             <Button onClick={handleConfirm}>
                                 {t.common.confirm || "Confirm"}
                             </Button>

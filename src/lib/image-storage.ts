@@ -78,6 +78,17 @@ function looksLikeRealImage(buffer: Buffer): boolean {
     return false;
 }
 
+/**
+ * 解码 data URL / 裸 base64 图片并做 magic-byte 校验。
+ * 供落盘以外的消费方（如 /api/ocr）复用同一套输入校验。
+ */
+export function decodeValidatedImage(input: string): { buffer: Buffer; mimeType: string } | null {
+    const decoded = decodeImage(input);
+    if (!decoded || decoded.buffer.length === 0) return null;
+    if (!looksLikeRealImage(decoded.buffer)) return null;
+    return decoded;
+}
+
 export interface StoredImage {
     storageKey: string;
     url: string;

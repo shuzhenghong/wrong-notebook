@@ -8,7 +8,7 @@ import { CorrectionEditor } from "@/components/correction-editor";
 import { ImageCropper } from "@/components/image-cropper";
 import { ParsedQuestion } from "@/lib/ai";
 import { apiClient } from "@/lib/api-client";
-import { AnalyzeResponse, Notebook, AppConfig } from "@/types/api";
+import { AnalyzeResponse, Notebook, AppConfig, OcrTextResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { processImageFile } from "@/lib/image-utils";
@@ -32,6 +32,9 @@ export default function AddErrorPage() {
 
     // Input mode: "image" for photo upload, "text" for manual text input
     const [inputMode, setInputMode] = useState<"image" | "text">("image");
+
+    // 本地 OCR 提取的文字，作为 TextInputZone 的预填内容
+    const [ocrText, setOcrText] = useState<string>("");
 
     // Cropper state
     const [croppingImage, setCroppingImage] = useState<string | null>(null);
@@ -107,6 +110,43 @@ export default function AddErrorPage() {
         setIsCropperOpen(false);
         const file = new File([croppedBlob], "cropped-image.jpg", { type: "image/jpeg" });
         handleAnalyze(file);
+    };
+
+    // 本地 OCR：提取图片文字并预填到手动输入框，用户确认后可继续 AI 解题
+    const handleOcrComplete = async (croppedBlob: Blob) => {
+        setIsCropperOpen(false);
+        frontendLogger.info('[AddOcr]', 'Starting local OCR flow');
+        try {
+            setAnalysisStep('compressing');
+            const file = new File([croppedBlob], "ocr-image.jpg", { type: "image/jpeg" });
+            const base64Image = await processImageFile(file);
+
+            setAnalysisStep('analyzing');
+            const data = await apiClient.post<OcrTextResponse>("/api/ocr", {
+                imageBase64: base64Image,
+            }, { timeout: 60000 });
+
+            if (!data || typeof data.text !== 'string' || !data.text.trim()) {
+                frontendLogger.warn('[AddOcr]', 'OCR returned no text');
+                alert(t.errors?.OCR_RESPONSE_ERROR || t.common.messages?.analysisFailed || 'OCR failed');
+                return;
+            }
+
+            setOcrText(data.text);
+            setInputMode("text");
+            frontendLogger.info('[AddOcr]', 'Local OCR completed', { lineCount: data.lineCount });
+        } catch (error: any) {
+            frontendLogger.error('[AddOcr]', 'Local OCR failed', {
+                error: error?.message || String(error)
+            });
+            const backendErrorType = error?.data?.message;
+            const errorMessage = backendErrorType && typeof backendErrorType === 'string'
+                ? ((t.errors as any)?.[backendErrorType] || backendErrorType)
+                : (t.common.messages?.analysisFailed || 'Analysis failed');
+            alert(errorMessage);
+        } finally {
+            setAnalysisStep('idle');
+        }
     };
 
     const handleAnalyze = async (file: File) => {
@@ -399,6 +439,7 @@ export default function AddErrorPage() {
                                 onSubmit={handleTextSubmit}
                                 isAnalyzing={analysisStep !== 'idle'}
                                 defaultNotebookName={notebook?.name}
+                                initialText={ocrText}
                             />
                         )}
                     </div>
@@ -421,6 +462,7 @@ export default function AddErrorPage() {
                 open={isCropperOpen}
                 onClose={() => setIsCropperOpen(false)}
                 onCropComplete={handleCropComplete}
+                onOcrComplete={handleOcrComplete}
             />
         </main>
     );

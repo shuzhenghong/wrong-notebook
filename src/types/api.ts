@@ -245,3 +245,13 @@ export interface RegisterRequest {
     educationStage: string;
     enrollmentYear: number;
 }
+
+/** POST /api/ocr 响应：本地 OCR（lw.PPOCR.OpenCVDNN）识别结果 */
+export interface OcrTextResponse {
+    /** 按阅读顺序拼接的全部文本 */
+    text: string;
+    lines: { text: string; score: number }[];
+    lineCount: number;
+    /** OCR 服务请求 ID，用于服务端日志排查 */
+    requestId: string | null;
+}

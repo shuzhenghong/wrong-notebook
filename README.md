@@ -229,6 +229,24 @@ npm run dev
 | API 版本 | 默认 `2024-02-15-preview` |
 | 模型 | 显示用的模型名称，如 `gpt-4o` |
 
+## 🔤 本地 OCR（离线文字提取）
+
+系统支持对接 [lw.PPOCR.OpenCVDNN](https://github.com/lxw112190/lw.PPOCR.OpenCVDNN)（PP-OCRv6 Tiny Chinese，OpenCV DNN 纯 CPU 推理，无需 GPU / Python / Paddle Runtime）实现**本地 OCR**：
+
+- 拍照/上传裁剪后，裁剪弹窗中除「AI 解析」外多一个**「提取文字」**按钮；
+- 提取的文字会自动预填到「手动输入」框，可校对后继续 AI 解题（走文字解析通道，不消耗视觉模型额度）；
+- 全程在本机/内网完成，图片不出外网。
+
+**Docker Compose 部署**：`docker-compose.yml` 已内置 `ocr` sidecar 服务（镜像 `ghcr.io/lxw112190/lw.ppocr.opencvdnn:1.1.0`，约 150MB 内存），`docker compose up -d` 即自动启用，无需额外配置。
+
+**环境变量**：
+
+| 变量 | 说明 | 默认 |
+| :--- | :--- | :--- |
+| `OCR_BASE_URL` | OCR 服务地址；**留空 = 关闭本地 OCR** | Compose 内为 `http://ocr:8787` |
+| `OCR_API_KEY` | OCR 服务端启用 `api_key` 时填写 | 空 |
+| `OCR_TIMEOUT_MS` | 单次请求超时（1000~120000） | `20000` |
+
 ## 🛠️ 实用脚本
 
 在 `scripts/` 目录下提供了一些实用脚本，用于维护和调试：
