@@ -26,6 +26,8 @@ import { DirectTextEditor } from "@/components/direct-text-editor";
 function HomeContent() {
     const [step, setStep] = useState<"upload" | "review">("upload");
     const [analysisStep, setAnalysisStep] = useState<ProgressStatus>('idle');
+    // AI 流式输出的最新文本片段（展示在进度卡片）
+    const [streamText, setStreamText] = useState('');
     const [progress, setProgress] = useState(0);
     const [parsedData, setParsedData] = useState<ParsedQuestion | null>(null);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
@@ -479,6 +481,7 @@ function HomeContent() {
                 status={analysisStep}
                 progress={progress}
                 message={getProgressMessage()}
+                detail={streamText}
             />
 
             <div className="container mx-auto p-4 space-y-8 pb-20">

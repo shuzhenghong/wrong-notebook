@@ -8,6 +8,9 @@ export type { MistakeStatus };
 
 export type DifficultyLevel = 'easy' | 'medium' | 'hard' | 'harder';
 
+/** 流式输出回调：每收到一段增量文本调用一次（不支持流式的 provider 会忽略） */
+export type OnDelta = (delta: string) => void;
+
 export interface ReanswerQuestionResult {
     answerText: string;
     analysis: string;
@@ -24,7 +27,7 @@ export interface GeogebraAnalysisResult {
 }
 
 export interface AIService {
-    analyzeImage(imageBase64: string, mimeType?: string, language?: 'zh' | 'en', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null): Promise<ParsedQuestionFromSchema>;
+    analyzeImage(imageBase64: string, mimeType?: string, language?: 'zh' | 'en', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestionFromSchema>;
     generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language?: 'zh' | 'en', difficulty?: DifficultyLevel, gradeSemester?: string | null): Promise<ParsedQuestionFromSchema>;
     reanswerQuestion(questionText: string, language?: 'zh' | 'en', subject?: string | null, imageBase64?: string, gradeSemester?: string | null): Promise<ReanswerQuestionResult>;
     analyzeForGeogebra(questionText: string, answerText: string, analysis: string, previousErrors?: string): Promise<GeogebraAnalysisResult>;

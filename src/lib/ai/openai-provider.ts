@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, OnDelta } from "./types";
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
@@ -161,7 +161,7 @@ export class OpenAIProvider implements AIService {
         }
     }
 
-    async analyzeImage(imageBase64: string, mimeType: string = "image/jpeg", language: 'zh' | 'en' = 'zh', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null): Promise<ParsedQuestion> {
+    async analyzeImage(imageBase64: string, mimeType: string = "image/jpeg", language: 'zh' | 'en' = 'zh', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestion> {
         const config = getAppConfig();
 
         // 从数据库获取各学科标签
@@ -237,6 +237,7 @@ export class OpenAIProvider implements AIService {
                     },
                 ]);
 
+                // 传入 onDelta 时启用流式，SSE 逐段解析 delta 转发出去
                 const res = await fetch(`${this.baseURL}/chat/completions`, {
                     method: 'POST',
                     headers: {
@@ -247,6 +248,7 @@ export class OpenAIProvider implements AIService {
                         model: this.model,
                         messages,
                         max_tokens: 8192,
+                        ...(onDelta ? { stream: true } : {}),
                     }),
                 });
 
@@ -256,7 +258,42 @@ export class OpenAIProvider implements AIService {
                     throw new Error(`${res.status} status code (${errBody})`);
                 }
 
-                response = await res.json();
+                if (onDelta && res.body) {
+                    response = await consumeOpenAIStyleSSE(res.body, onDelta);
+                } else {
+                    response = await res.json();
+                }
+            } else if (onDelta) {
+                // 流式：SDK AsyncIterable，逐段转发 delta 并聚合完整文本
+                const stream = await this.openai.chat.completions.create({
+                    model: this.model,
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        {
+                            role: "user",
+                            content: [
+                                {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: `data:${mimeType};base64,${imageBase64}`,
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                    max_tokens: 8192,
+                    stream: true,
+                } as any);
+
+                let full = '';
+                for await (const chunk of stream as unknown as AsyncIterable<any>) {
+                    const delta = chunk?.choices?.[0]?.delta?.content;
+                    if (typeof delta === 'string' && delta.length > 0) {
+                        full += delta;
+                        onDelta(delta);
+                    }
+                }
+                response = { choices: [{ message: { content: full } }] };
             } else {
                 response = await this.openai.chat.completions.create({
                     model: this.model,
@@ -537,5 +574,44 @@ export class OpenAIProvider implements AIService {
         }
         throw new Error("AI_UNKNOWN_ERROR");
     }
+}
+
+/**
+ * 消费 OpenAI 风格的 SSE 流（LongCat 直连路径用）：
+ * 逐段解析 `data: {...}` 帧，转发 delta 并聚合为完整响应结构。
+ */
+async function consumeOpenAIStyleSSE(body: ReadableStream<Uint8Array>, onDelta: OnDelta): Promise<any> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE 帧以空行分隔；data: [DONE] 表示结束
+        const frames = buffer.split('\n');
+        buffer = frames.pop() ?? '';
+        for (const line of frames) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const payload = trimmed.slice(5).trim();
+            if (payload === '[DONE]') continue;
+            try {
+                const json = JSON.parse(payload);
+                const delta = json?.choices?.[0]?.delta?.content;
+                if (typeof delta === 'string' && delta.length > 0) {
+                    full += delta;
+                    onDelta(delta);
+                }
+            } catch {
+                // 不完整或非 JSON 帧，忽略
+            }
+        }
+    }
+
+    return { choices: [{ message: { content: full } }] };
 }
 

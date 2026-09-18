@@ -127,8 +127,8 @@ describe('AI Provider 初始化', () => {
     });
 
     describe('AI Service Factory', () => {
-        it('应该根据配置返回 OpenAI Provider', async () => {
-            const { getAIService } = await import('@/lib/ai');
+        it('应该根据配置返回 OpenAI failover 链（active 实例优先）', async () => {
+            const { getAIService, getAIServiceCandidates } = await import('@/lib/ai');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'openai',
                 openai: {
@@ -146,13 +146,40 @@ describe('AI Provider 初始化', () => {
             });
 
             const service = getAIService();
+            const candidates = getAIServiceCandidates();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('OpenAIProvider');
+            expect(service.constructor.name).toBe('FailoverAIService');
+            expect(candidates).toHaveLength(1);
+            expect(candidates[0].name).toBe('openai:Test');
         });
 
-        it('应该根据配置返回 Gemini Provider', async () => {
-            const { getAIService } = await import('@/lib/ai');
+        it('多个 OpenAI 实例时应该构建 failover 链（active 在前）', async () => {
+            const { getAIServiceCandidates } = await import('@/lib/ai');
+            vi.mocked(getAppConfig).mockReturnValue({
+                aiProvider: 'openai',
+                openai: {
+                    instances: [
+                        { id: 'a', name: 'Backup', apiKey: 'key-a', baseUrl: 'https://a.example.com/v1', model: 'gpt-4o' },
+                        { id: 'b', name: 'Primary', apiKey: 'key-b', baseUrl: 'https://b.example.com/v1', model: 'gpt-4o' },
+                    ],
+                    activeInstanceId: 'b',
+                },
+                gemini: { apiKey: '', model: '' }
+            } as any);
+            vi.mocked(getActiveOpenAIConfig).mockReturnValue({
+                id: 'b', name: 'Primary', apiKey: 'key-b', baseUrl: 'https://b.example.com/v1', model: 'gpt-4o',
+            });
+
+            const candidates = getAIServiceCandidates();
+
+            expect(candidates).toHaveLength(2);
+            expect(candidates[0].name).toBe('openai:Primary');
+            expect(candidates[1].name).toBe('openai:Backup');
+        });
+
+        it('应该根据配置返回 Gemini failover 链', async () => {
+            const { getAIService, getAIServiceCandidates } = await import('@/lib/ai');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'gemini',
                 gemini: { apiKey: 'test-gemini-key', model: 'gemini-2.0-flash' },
@@ -160,22 +187,27 @@ describe('AI Provider 初始化', () => {
             } as any);
 
             const service = getAIService();
+            const candidates = getAIServiceCandidates();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('GeminiProvider');
+            expect(service.constructor.name).toBe('FailoverAIService');
+            expect(candidates).toHaveLength(1);
+            expect(candidates[0].name).toBe('gemini');
         });
 
         it('配置未知 provider 时应该默认返回 Gemini Provider', async () => {
-            const { getAIService } = await import('@/lib/ai');
+            const { getAIService, getAIServiceCandidates } = await import('@/lib/ai');
             vi.mocked(getAppConfig).mockReturnValue({
                 aiProvider: 'unknown',
                 gemini: { apiKey: 'test-gemini-key' },
             } as any);
 
             const service = getAIService();
+            const candidates = getAIServiceCandidates();
 
             expect(service).toBeDefined();
-            expect(service.constructor.name).toBe('GeminiProvider');
+            expect(candidates).toHaveLength(1);
+            expect(candidates[0].name).toBe('gemini');
         });
     });
 });

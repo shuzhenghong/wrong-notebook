@@ -11,12 +11,14 @@ interface ProgressFeedbackProps {
     status: ProgressStatus;
     progress?: number;
     message?: string;
+    /** 次要信息行（如 AI 流式输出的最新内容片段） */
+    detail?: string;
     className?: string;
 }
 
 import { useLanguage } from "@/contexts/LanguageContext";
 
-export function ProgressFeedback({ status, progress, message, className }: ProgressFeedbackProps) {
+export function ProgressFeedback({ status, progress, message, detail, className }: ProgressFeedbackProps) {
     const { t } = useLanguage();
     // 确保只在客户端挂载完成后才渲染遮罩层，防止 SSR/Hydration 问题
     const [isMounted, setIsMounted] = useState(false);
@@ -54,6 +56,12 @@ export function ProgressFeedback({ status, progress, message, className }: Progr
                     <p className="text-sm text-muted-foreground">
                         {progress !== undefined ? `${Math.round(progress)}%` : (t.common.pleaseWait || 'Please wait...')}
                     </p>
+
+                    {detail ? (
+                        <p className="w-full max-h-24 overflow-hidden text-xs text-muted-foreground/80 font-mono break-all text-left line-clamp-3 px-2">
+                            {detail}
+                        </p>
+                    ) : null}
                 </div>
             </div>
         </div>

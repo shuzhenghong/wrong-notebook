@@ -240,7 +240,7 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
                     {imagePreview && (
                         <Card>
                             <CardContent className="p-4">
-                                <img src={imagePreview} alt="Original" className="w-full rounded-md" />
+                                <img src={imagePreview} alt="Original" loading="lazy" decoding="async" className="w-full rounded-md" />
                             </CardContent>
                         </Card>
                     )}

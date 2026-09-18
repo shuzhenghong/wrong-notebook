@@ -119,7 +119,7 @@ model ErrorItem {
   reviewSchedules ReviewSchedule[]
   practiceRecords PracticeRecord[]
 
-  @@index([userId])
+  @@index([userId, createdAt])
   @@index([subjectId])
   @@index([masteryLevel])
   @@index([createdAt])

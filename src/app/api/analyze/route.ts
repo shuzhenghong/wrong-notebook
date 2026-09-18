@@ -5,7 +5,8 @@ import { calculateGrade } from "@/lib/grade-calculator";
 import { prisma } from "@/lib/prisma";
 import { badRequest, createErrorResponse, tooManyRequests, ErrorCode } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
-import { getAppConfig, getActiveOpenAIConfig, validateBaseUrlWithDns } from "@/lib/config";
+import { validateBaseUrlWithDns } from "@/lib/config";
+import { getAIServiceWithCandidates } from "@/lib/ai";
 import { getCurrentUser } from "@/lib/server-auth";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -109,15 +110,10 @@ export async function POST(req: Request) {
         };
         const subjectChinese = subjectName ? subjectNameMapping[subjectName] : null;
 
-        // 运行期再校验一次 AI 出口地址：配置文件可能被手工改成内网地址
-        const runtimeConfig = getAppConfig();
-        const runtimeUrls: Array<string | undefined> = runtimeConfig.aiProvider === 'openai'
-            ? [getActiveOpenAIConfig()?.baseUrl]
-            : runtimeConfig.aiProvider === 'azure'
-                ? [runtimeConfig.azure?.endpoint]
-                : [runtimeConfig.gemini?.baseUrl];
-
-        for (const runtimeUrl of runtimeUrls) {
+        // 运行期再校验一次 AI 出口地址：配置文件可能被手工改成内网地址。
+        // fallback 链上所有候选渠道的出口都要校验（主渠道失败会切到备选）。
+        const { service: aiService, candidates: aiCandidates } = getAIServiceWithCandidates();
+        for (const runtimeUrl of aiCandidates.map((c) => c.url)) {
             const check = await validateBaseUrlWithDns(runtimeUrl);
             if (!check.ok) {
                 logger.error({ reason: check.reason }, 'Refusing to call AI provider with unsafe baseUrl');
@@ -125,8 +121,47 @@ export async function POST(req: Request) {
             }
         }
 
-        logger.info({ userGrade, userGradeSemester, subject: subjectChinese }, 'Calling AI service for image analysis');
-        const aiService = getAIService();
+        logger.info({ userGrade, userGradeSemester, subject: subjectChinese, channels: aiCandidates.length }, 'Calling AI service for image analysis');
+
+        // SSE 流式模式：客户端带 Accept: text/event-stream 时，分阶段推送
+        // status / delta（AI 增量文本）/ result / error 事件，替代长时间无反馈的阻塞等待
+        const wantsSSE = (req.headers.get('accept') || '').includes('text/event-stream');
+        if (wantsSSE) {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream<Uint8Array>({
+                async start(controller) {
+                    const send = (event: string, data: unknown) => {
+                        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+                    };
+                    try {
+                        send('status', { stage: 'calling_ai' });
+                        const result = await aiService.analyzeImage(
+                            imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester,
+                            (delta) => send('delta', { text: delta })
+                        );
+                        if (!result?.knowledgePoints?.length) {
+                            logger.warn('Knowledge points is empty or null');
+                        }
+                        send('result', result);
+                        logger.info({ mode: 'sse' }, 'AI analysis successful');
+                    } catch (error: any) {
+                        logger.error({ error: error.message, stack: error.stack }, 'Analysis error occurred (SSE)');
+                        send('error', { message: normalizeAnalyzeError(error) });
+                    } finally {
+                        controller.close();
+                    }
+                },
+            });
+            return new Response(stream, {
+                headers: {
+                    'Content-Type': 'text/event-stream; charset=utf-8',
+                    'Cache-Control': 'no-cache, no-transform',
+                    'Connection': 'keep-alive',
+                    'X-Accel-Buffering': 'no',
+                },
+            });
+        }
+
         const analysisResult = await aiService.analyzeImage(imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
 
         logger.debug({
@@ -149,33 +184,31 @@ export async function POST(req: Request) {
             stack: error.stack
         }, 'Analysis error occurred');
 
-        // 返回具体的错误类型，便于前端显示详细提示
-        let errorMessage = error.message || "Failed to analyze image";
-
-        // 识别特定错误类型
-        if (error.message && (
-            error.message === 'AI_CONNECTION_FAILED' ||
-            error.message === 'AI_RESPONSE_ERROR' ||
-            error.message.includes('AI_AUTH_ERROR') ||
-            error.message === 'AI_TIMEOUT_ERROR' ||
-            error.message === 'AI_QUOTA_EXCEEDED' ||
-            error.message === 'AI_PERMISSION_DENIED' ||
-            error.message === 'AI_NOT_FOUND' ||
-            error.message === 'AI_SERVICE_UNAVAILABLE' ||
-            error.message === 'AI_UNKNOWN_ERROR'
-        )) {
-            // 直接传递 AI Provider 定义的错误类型 (如果是 AI_AUTH_ERROR，提取出来)
-            if (error.message.includes('AI_AUTH_ERROR')) {
-                errorMessage = 'AI_AUTH_ERROR';
-            } else {
-                errorMessage = error.message;
-            }
-        } else if (error.message?.includes('Zod') || error.message?.includes('validate')) {
-            // Zod 验证错误
-            errorMessage = 'AI_RESPONSE_ERROR';
-        }
-
         // 只回传归一化后的错误码，不把上游原始报文透给前端（可能含 endpoint、密钥片段）
-        return createErrorResponse(errorMessage, 500, ErrorCode.AI_ERROR);
+        return createErrorResponse(normalizeAnalyzeError(error), 500, ErrorCode.AI_ERROR);
     }
+}
+
+/** 把任意异常归一化为前端可识别的 AI_* 错误码（JSON 与 SSE 两条路径共用） */
+function normalizeAnalyzeError(error: any): string {
+    const message: string = error?.message || "Failed to analyze image";
+
+    if (
+        message === 'AI_CONNECTION_FAILED' ||
+        message === 'AI_RESPONSE_ERROR' ||
+        message.includes('AI_AUTH_ERROR') ||
+        message === 'AI_TIMEOUT_ERROR' ||
+        message === 'AI_QUOTA_EXCEEDED' ||
+        message === 'AI_PERMISSION_DENIED' ||
+        message === 'AI_NOT_FOUND' ||
+        message === 'AI_SERVICE_UNAVAILABLE' ||
+        message === 'AI_UNKNOWN_ERROR'
+    ) {
+        // 如果是 AI_AUTH_ERROR，提取出来
+        return message.includes('AI_AUTH_ERROR') ? 'AI_AUTH_ERROR' : message;
+    }
+    if (message.includes('Zod') || message.includes('validate')) {
+        return 'AI_RESPONSE_ERROR';
+    }
+    return message;
 }

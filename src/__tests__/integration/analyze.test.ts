@@ -32,9 +32,20 @@ vi.mock('@/lib/prisma', () => ({
     },
 }));
 
-// Mock AI service
+// Mock AI service（路由使用 getAIServiceWithCandidates 获取 failover 链）
 vi.mock('@/lib/ai', () => ({
     getAIService: vi.fn(() => mocks.mockAIService),
+    getAIServiceWithCandidates: vi.fn(() => ({
+        service: mocks.mockAIService,
+        candidates: [{ name: 'openai:test', service: mocks.mockAIService, url: 'https://api.openai.com/v1' }],
+    })),
+}));
+
+// Mock config：SSRF 校验直接放行（真实实现会做 DNS 解析，测试环境不可达）
+vi.mock('@/lib/config', () => ({
+    validateBaseUrlWithDns: vi.fn().mockResolvedValue({ ok: true }),
+    getAppConfig: vi.fn(() => ({ aiProvider: 'openai' })),
+    getActiveOpenAIConfig: vi.fn(() => undefined),
 }));
 
 // Mock next-auth
@@ -110,6 +121,60 @@ describe('/api/analyze', () => {
             expect(data.questionText).toBe('求解 x + 2 = 5');
             expect(data.answerText).toBe('x = 3');
             expect(data.knowledgePoints).toHaveLength(2);
+        });
+
+        it('SSE 模式：应推送 status/delta/result 事件', async () => {
+            const aiResult = {
+                questionText: '求解 x + 2 = 5',
+                answerText: 'x = 3',
+                analysis: '移项得 x = 3',
+                knowledgePoints: ['一元一次方程'],
+            };
+            mocks.mockAIService.analyzeImage.mockImplementation(
+                async (_img: unknown, _m: unknown, _l: unknown, _g: unknown, _s: unknown, _gs: unknown, onDelta?: (t: string) => void) => {
+                    onDelta?.('题目解析中 ');
+                    onDelta?.('移项得 x = 3');
+                    return aiResult;
+                }
+            );
+
+            const request = new Request('http://localhost/api/analyze', {
+                method: 'POST',
+                body: JSON.stringify({ imageBase64: 'data:image/png;base64,test...' }),
+                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(200);
+            expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+            const text = await response.text();
+            expect(text).toContain('event: status');
+            expect(text).toContain('"stage":"calling_ai"');
+            expect(text).toContain('event: delta');
+            expect(text).toContain('移项得 x = 3');
+            expect(text).toContain('event: result');
+            expect(text).toContain('求解 x + 2 = 5');
+            expect(text).not.toContain('event: error');
+        });
+
+        it('SSE 模式：AI 失败时推送 error 事件（归一化错误码，不泄露上游报文）', async () => {
+            mocks.mockAIService.analyzeImage.mockRejectedValue(new Error('AI_TIMEOUT_ERROR'));
+
+            const request = new Request('http://localhost/api/analyze', {
+                method: 'POST',
+                body: JSON.stringify({ imageBase64: 'data:image/png;base64,test...' }),
+                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+            });
+
+            const response = await POST(request);
+
+            expect(response.status).toBe(200);
+            const text = await response.text();
+            expect(text).toContain('event: error');
+            expect(text).toContain('AI_TIMEOUT_ERROR');
+            expect(text).not.toContain('event: result');
         });
 
         it('应该支持 Data URL 格式的图像', async () => {

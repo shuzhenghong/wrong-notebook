@@ -10,14 +10,17 @@ export const prisma =
             : (process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error']),
     })
 
-// SQLite 加固：开启 WAL + 设置 busy_timeout
+// SQLite 加固：开启 WAL + 设置 busy_timeout + synchronous=NORMAL
 // - WAL 允许并发读，写入冲突概率显著下降
 // - busy_timeout 让 Prisma 等待 SQLite 锁最多 5 秒再抛错
+// - synchronous=NORMAL 在 WAL 模式下是安全推荐值：写入不再每次 fsync，
+//   只在 checkpoint 时落盘，事务原子性仍由 WAL 保证（掉电最多丢最后一个 checkpoint 后的事务）
 if (process.env.NEXT_RUNTIME === 'nodejs') {
     // 使用 $executeRawUnsafe 发 PRAGMA（SQLite 特有）
     Promise.resolve()
         .then(() => prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL;'))
         .then(() => prisma.$executeRawUnsafe('PRAGMA busy_timeout=5000;'))
+        .then(() => prisma.$executeRawUnsafe('PRAGMA synchronous=NORMAL;'))
         .catch((err) => {
             // 如果 DB 文件还没建好就调用（首次启动），忽略错误
             console.warn('[prisma] failed to apply SQLite PRAGMA (may be first start):', err.message);
