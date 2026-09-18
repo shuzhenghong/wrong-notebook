@@ -59,7 +59,7 @@ export const authOptions: NextAuthOptions = {
 
                 // Check if user is active
                 if (!user.isActive) {
-                    logger.warn('User is disabled');
+                    logger.warn({ email: user.email }, 'User account is disabled, refusing login');
                     throw new Error("Account is disabled")
                 }
 
@@ -77,12 +77,14 @@ export const authOptions: NextAuthOptions = {
                     email: user.email,
                     name: user.name,
                     role: user.role,
-                }
+                    // isActive 进 token，session callback 可以直接用
+                    isActive: user.isActive,
+                } as any
             }
         })
     ],
-    // Enable debug messages in the console
-    debug: true,
+    // Debug logs 在开发环境开，但别在生产里刷日志
+    debug: process.env.NODE_ENV !== 'production' && process.env.NEXTAUTH_DEBUG === 'true',
     logger: {
         error(code, metadata) {
             logger.error({ code, metadata }, 'NextAuth error');
@@ -96,6 +98,30 @@ export const authOptions: NextAuthOptions = {
     },
     callbacks: {
         async session({ session, token }) {
+            // 每次 session 回调都从 DB 确认用户是否仍然启用
+            // —— 防止禁用用户继续使用已签发的 JWT
+            if (token?.email) {
+                try {
+                    const u = await prisma.user.findUnique({
+                        where: { email: token.email as string },
+                        select: { isActive: true, role: true, id: true },
+                    });
+                    if (!u || !u.isActive) {
+                        logger.warn({ email: token.email }, 'Session rejected: user missing or disabled');
+                        // 返回一个空 session 让客户端视为未登录
+                        return { ...session, user: {} } as any;
+                    }
+                    // 同步最新 role（管理员可能后台改了）
+                    token.role = u.role;
+                    token.id = u.id;
+                    token.isActive = true;
+                } catch (err) {
+                    logger.warn({ error: (err as Error).message }, 'Failed to validate user on session callback');
+                    // DB 连不上时宁可不放行 —— fail-closed
+                    return { ...session, user: {} } as any;
+                }
+            }
+
             logger.debug({ userId: token.id }, 'Session callback');
             return {
                 ...session,
@@ -108,11 +134,12 @@ export const authOptions: NextAuthOptions = {
         },
         async jwt({ token, user, account, profile }) {
             if (user) {
-                logger.debug({ userId: user.id }, 'JWT callback - Initial signin');
+                logger.debug({ userId: (user as any).id }, 'JWT callback - Initial signin');
                 return {
                     ...token,
-                    id: user.id,
+                    id: (user as any).id,
                     role: (user as any).role,
+                    isActive: (user as any).isActive,
                 }
             }
             logger.debug('JWT callback - Subsequent call');

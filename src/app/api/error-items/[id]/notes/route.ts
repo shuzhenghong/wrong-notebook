@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { getServerSession } from "next-auth";
-import { unauthorized, internalError } from "@/lib/api-errors";
+import { internalError, notFound, forbidden } from "@/lib/api-errors";
 import { createLogger } from "@/lib/logger";
+import { getCurrentUser } from "@/lib/server-auth";
 
 const logger = createLogger('api:error-items:notes');
 
@@ -12,29 +11,29 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const session = await getServerSession(authOptions);
+    const auth = await getCurrentUser();
+    if (!auth.ok) return auth.response;
 
     try {
-        let user;
-        if (session?.user?.email) {
-            user = await prisma.user.findUnique({
-                where: { email: session.user.email },
-            });
-        }
-
-        if (!user) {
-            return unauthorized("Authentication required");
-        }
-
         const { userNotes } = await req.json();
 
+        // 先确认这条错题属于当前用户 —— 补上报告点名的 IDOR 漏洞
+        const existing = await prisma.errorItem.findUnique({
+            where: { id },
+            select: { userId: true },
+        });
+
+        if (!existing) {
+            return notFound("Error item not found");
+        }
+        if (existing.userId !== auth.user.id) {
+            logger.warn({ itemId: id, userId: auth.user.id }, 'User attempted to update notes on another user\'s item');
+            return forbidden("Not owner");
+        }
+
         const errorItem = await prisma.errorItem.update({
-            where: {
-                id: id,
-            },
-            data: {
-                userNotes: userNotes,
-            },
+            where: { id },
+            data: { userNotes },
         });
 
         return NextResponse.json(errorItem);

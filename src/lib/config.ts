@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { createLogger } from './logger';
+import { validateBaseUrl } from './ssrf';
+import { FULL_MASK, maskSensitiveFields } from './secrets';
 
 const logger = createLogger('config');
 
@@ -163,6 +165,25 @@ export function getAppConfig(): AppConfig {
 }
 
 export function updateAppConfig(newConfig: Partial<AppConfig>) {
+    // SSRF 防护：所有 baseUrl 必须过白名单
+    const urlsToCheck: Array<{ label: string; url: string | undefined }> = [];
+    if (newConfig.openai?.instances) {
+        for (const inst of newConfig.openai.instances) {
+            urlsToCheck.push({ label: `openai instance ${inst.name || inst.id}`, url: inst.baseUrl });
+        }
+    }
+    if (newConfig.gemini?.baseUrl) urlsToCheck.push({ label: 'gemini', url: newConfig.gemini.baseUrl });
+    if (newConfig.azure?.endpoint) urlsToCheck.push({ label: 'azure', url: newConfig.azure.endpoint });
+
+    for (const { label, url } of urlsToCheck) {
+        const res = validateBaseUrl(url);
+        if (!res.ok) {
+            const msg = `Refusing to save unsafe baseUrl for ${label}: ${res.reason}`;
+            logger.error({ label, url }, msg);
+            throw new Error(msg);
+        }
+    }
+
     const currentConfig = getAppConfig();
     const updatedConfig = {
         ...currentConfig,
@@ -201,4 +222,30 @@ export function getActiveOpenAIConfig(): OpenAIInstance | undefined {
 
 // 最大实例数限制
 export const MAX_OPENAI_INSTANCES = 10;
+
+/**
+ * 给前端返回的 config：敏感字段全部掩码。
+ * 前端收到 apiKey=********，POST 回去时原样回传，后端原样保留原值（已有逻辑处理）。
+ */
+export function getMaskedAppConfig(): AppConfig {
+    const cfg = getAppConfig();
+
+    // 把所有 apiKey 置为 FULL_MASK
+    const maskedOpenai = cfg.openai
+        ? {
+            ...cfg.openai,
+            instances: cfg.openai.instances?.map((i) => ({ ...i, apiKey: FULL_MASK })) || [],
+        }
+        : undefined;
+
+    return {
+        ...cfg,
+        openai: maskedOpenai,
+        gemini: cfg.gemini ? { ...cfg.gemini, apiKey: FULL_MASK } : undefined,
+        azure: cfg.azure ? { ...cfg.azure, apiKey: FULL_MASK } : undefined,
+    };
+}
+
+// 预留工具：深层脱敏任意对象（日志、异常），供外部调用
+export { maskSensitiveFields, validateBaseUrl };
 

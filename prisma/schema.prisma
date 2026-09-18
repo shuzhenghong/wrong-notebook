@@ -84,10 +84,10 @@ model ErrorItem {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   subjectId      String?
   subject        Subject? @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  
+
   originalImageUrl String
   ocrText          String?
-  
+
   // AI Analysis
   questionText     String? // Parsed question
   answerText       String? // AI provided answer
@@ -100,20 +100,26 @@ model ErrorItem {
 
   // New: many-to-many relation with KnowledgeTag
   tags             KnowledgeTag[]
-  
+
   // User Metadata
   source           String? // e.g. "Midterm Exam"
   errorType        String? // e.g. "Calculation", "Concept"
   userNotes        String?
-  
+
   masteryLevel     Int     @default(0) // 0: New, 1: Reviewing, 2: Mastered
   gradeSemester    String? // e.g. "Junior High Grade 2, 1st Semester"
   paperLevel       String? // e.g. "A", "B", "Other"
-  
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   reviewSchedules ReviewSchedule[]
+  practiceRecords PracticeRecord[]
+
+  @@index([userId])
+  @@index([subjectId])
+  @@index([masteryLevel])
+  @@index([createdAt])
 }
 
 model ReviewSchedule {
@@ -132,10 +138,17 @@ model PracticeRecord {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
+  // 关联到具体错题 — 之前没有外键导致练习记录无法回流到错题
+  errorItemId String?
+  errorItem   ErrorItem? @relation(fields: [errorItemId], references: [id], onDelete: SetNull)
+
   subject   String?  // e.g. "Math", "Physics"
   difficulty String? // "easy", "medium", "hard", "harder"
   isCorrect Boolean?
-  
+
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([errorItemId])
 }

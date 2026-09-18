@@ -5,69 +5,110 @@ import { createLogger } from "@/lib/logger";
 
 const logger = createLogger('middleware');
 
+// 登录/注册 这类公开页面
+const PUBLIC_PAGES = ["/login", "/register", "/latex-test"];
+// admin 页面 + admin API — middleware 保护
+const ADMIN_PREFIXES = ["/admin", "/api/admin"];
+
 export async function middleware(req: NextRequest) {
     // Debug logging for middleware
     logger.debug({ method: req.method, path: req.nextUrl.pathname }, 'Processing request');
 
+    const pathname = req.nextUrl.pathname;
+    const isAdminPath = ADMIN_PREFIXES.some((p) => pathname.startsWith(p));
+    const isPublicPage = PUBLIC_PAGES.some((p) => pathname.startsWith(p));
+
+    let token;
     try {
-        const token = await getToken({
+        token = await getToken({
             req,
             secret: process.env.NEXTAUTH_SECRET,
-            cookieName: "next-auth.session-token", // Explicitly look for the standardized cookie
+            cookieName: "next-auth.session-token",
         });
-
-        const isAuth = !!token;
-        const isAuthPage = req.nextUrl.pathname.startsWith("/login") || req.nextUrl.pathname.startsWith("/register");
-        const isAdminPage = req.nextUrl.pathname.startsWith("/admin");
-
-        logger.debug({
-            path: req.nextUrl.pathname,
-            isAuth,
-            isAuthPage,
-            hasToken: !!token,
-            cookies: req.cookies.getAll().map(c => c.name)
-        }, 'Auth status');
-
-        if (isAuthPage) {
-            if (isAuth) {
-                logger.debug('Redirecting authenticated user to /');
-                return NextResponse.redirect(new URL("/", req.url));
-            }
-            return null;
+    } catch (e) {
+        // 认证失败 → fail-closed，除了公开页面直接放行，其余一律视为未登录
+        logger.warn({ path: pathname, error: (e as Error).message }, 'Token resolution failed, treating as unauthenticated (fail-closed)');
+        if (isPublicPage) return NextResponse.next();
+        if (pathname.startsWith("/api/") && !isAdminPath) {
+            // 普通 API 路由由 route 自身用 getServerSession 再校验一次，不要在这里返回重定向
+            return NextResponse.next();
         }
+        let from = pathname;
+        if (req.nextUrl.search) from += req.nextUrl.search;
+        return NextResponse.redirect(
+            new URL(`/login?callbackUrl=${encodeURIComponent(from)}`, req.url)
+        );
+    }
 
+    const isAuth = !!token;
+
+    logger.debug({
+        path: pathname,
+        isAuth,
+        isAdminPath,
+        isPublicPage,
+    }, 'Auth status');
+
+    if (isPublicPage) {
+        if (isAuth) {
+            logger.debug('Redirecting authenticated user to /');
+            return NextResponse.redirect(new URL("/", req.url));
+        }
+        return null;
+    }
+
+    // admin API / admin page — 必须登录 + 必须 admin 角色
+    if (isAdminPath) {
         if (!isAuth) {
-            let from = req.nextUrl.pathname;
-            if (req.nextUrl.search) {
-                from += req.nextUrl.search;
+            // API 路径返回 401 JSON；页面返回 307 重定向
+            if (pathname.startsWith("/api/")) {
+                return NextResponse.json(
+                    { message: "Authentication required" },
+                    { status: 401 }
+                );
             }
-
-            logger.debug({ callbackUrl: from }, 'Redirecting unauthenticated user to login');
+            let from = pathname;
+            if (req.nextUrl.search) from += req.nextUrl.search;
             return NextResponse.redirect(
                 new URL(`/login?callbackUrl=${encodeURIComponent(from)}`, req.url)
             );
         }
-
-        // Admin route protection: only allow users with admin role
-        if (isAdminPage && token?.role !== "admin") {
-            logger.warn({ userId: token?.id, path: req.nextUrl.pathname }, 'Non-admin user attempting to access admin area');
+        if (token?.role !== "admin") {
+            logger.warn({ userId: token?.id, path: pathname }, 'Non-admin user attempting admin route');
+            if (pathname.startsWith("/api/")) {
+                return NextResponse.json(
+                    { message: "Admin role required" },
+                    { status: 403 }
+                );
+            }
             return NextResponse.redirect(new URL("/", req.url));
         }
-    } catch (e) {
-        logger.error({ error: e }, 'Error processing token');
         return NextResponse.next();
     }
+
+    // 普通 API 路由：由各个 route 自己用 getServerSession 校验 — 不在这里强制 redirect
+    if (pathname.startsWith("/api/")) {
+        return; // undefined = 放行，route 自行校验
+    }
+
+    // 普通页面：未登录 → 重定向登录
+    if (!isAuth) {
+        let from = pathname;
+        if (req.nextUrl.search) from += req.nextUrl.search;
+
+        logger.debug({ callbackUrl: from }, 'Redirecting unauthenticated user to login');
+        return NextResponse.redirect(
+            new URL(`/login?callbackUrl=${encodeURIComponent(from)}`, req.url)
+        );
+    }
+
+    return; // undefined = 放行
 }
 
 export const config = {
     matcher: [
-        /*
-         * Match all request paths except for the ones starting with:
-         * - api (API routes)
-         * - _next/static (static files)
-         * - _next/image (image optimization files)
-         * - favicon.ico (favicon file)
-         */
-        "/((?!api|_next/static|_next/image|favicon.ico).*)",
+        // 覆盖所有页面 + /api/admin/*（admin API 由 middleware 统一鉴权）
+        // 其他 /api/** 继续由 route 自行用 getServerSession 校验，不再被 matcher 排除
+        "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
     ],
 };

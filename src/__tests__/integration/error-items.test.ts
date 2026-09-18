@@ -54,6 +54,14 @@ vi.mock('@/lib/auth', () => ({
     authOptions: {},
 }));
 
+// Mock server-auth: notes route 现在通过它校验登录 + 归属
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: { id: 'user-1', email: 'user@example.com', role: 'user', isActive: true },
+    }),
+}));
+
 // Mock grade-calculator
 vi.mock('@/lib/grade-calculator', () => ({
     calculateGrade: vi.fn(() => '初一，上期'),
@@ -581,10 +589,14 @@ describe('/api/error-items', () => {
     });
 
     describe('PATCH /api/error-items/[id]/notes (更新笔记)', () => {
+        // 归属检查里 findUnique 的 mock：需要返回属于"当前用户"的 item
+        const OWNED_ITEM = { id: 'error-item-1', userId: 'user-1' };
+
         it('应该成功更新用户笔记', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             const existingItem = {
                 id: 'error-item-1',
-                userId: 'user-123',
+                userId: 'user-1',
                 userNotes: '',
             };
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
@@ -606,9 +618,10 @@ describe('/api/error-items', () => {
         });
 
         it('应该成功清空笔记', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             const existingItem = {
                 id: 'error-item-1',
-                userId: 'user-123',
+                userId: 'user-1',
                 userNotes: '旧笔记内容',
             };
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
@@ -631,9 +644,10 @@ describe('/api/error-items', () => {
 
         it('应该成功保存长笔记', async () => {
             const longNote = '这是一段很长的笔记内容。'.repeat(100);
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             mocks.mockPrismaErrorItem.update.mockResolvedValue({
                 id: 'error-item-1',
-                userId: 'user-123',
+                userId: 'user-1',
                 userNotes: longNote,
             });
 
@@ -649,8 +663,12 @@ describe('/api/error-items', () => {
         });
 
         it('应该拒绝未登录用户', async () => {
-            mocks.mockPrismaUser.findUnique.mockResolvedValue(null);
-            mocks.mockPrismaUser.findFirst.mockResolvedValue(null);
+            // 覆盖 server-auth mock 为未登录
+            const { getCurrentUser } = await import('@/lib/server-auth');
+            vi.mocked(getCurrentUser).mockResolvedValueOnce({
+                ok: false,
+                response: { status: 401, json: () => ({ message: 'Authentication required' }) },
+            } as any);
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
                 method: 'PATCH',
@@ -665,7 +683,26 @@ describe('/api/error-items', () => {
             expect(data.message).toBeDefined();
         });
 
+        it('应该拒绝修改他人错题的笔记（IDOR 防护）', async () => {
+            // item 存在但属于别人
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce({
+                id: 'error-item-1',
+                userId: 'user-999', // 不是 user-1
+            });
+
+            const request = new Request('http://localhost/api/error-items/error-item-1/notes', {
+                method: 'PATCH',
+                body: JSON.stringify({ userNotes: '笔记' }),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await PATCH_NOTES(request, { params: Promise.resolve({ id: 'error-item-1' }) });
+
+            expect(response.status).toBe(403);
+        });
+
         it('应该处理数据库错误', async () => {
+            mocks.mockPrismaErrorItem.findUnique.mockResolvedValueOnce(OWNED_ITEM);
             mocks.mockPrismaErrorItem.update.mockRejectedValue(new Error('Database error'));
 
             const request = new Request('http://localhost/api/error-items/error-item-1/notes', {

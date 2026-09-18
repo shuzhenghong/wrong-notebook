@@ -2,9 +2,43 @@
  * Models Route 单元测试
  *
  * 测试 /api/ai/models 端点的 Gemini 和 OpenAI 模型列表功能
+ *
+ * 注意：修复 P0 安全后，apiKey/baseUrl 不能再从 URL query 传入（SSRF + 密钥落日志），
+ * 一律从 getAppConfig / getActiveOpenAIConfig 读取。单元测试 mock 这些依赖即可。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+
+const mocks = vi.hoisted(() => ({
+    // 默认返回已认证用户
+    mockGetCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: { id: 'user-1', email: 'test@example.com', role: 'admin', isActive: true },
+    }),
+    // 默认返回 Gemini key + OpenAI active instance
+    mockGetAppConfig: vi.fn().mockReturnValue({
+        aiProvider: 'gemini',
+        allowRegistration: true,
+        openai: {
+            instances: [{
+                id: 'active-inst', name: 'Default',
+                apiKey: 'sk-config-key',
+                baseUrl: 'https://api.openai.com/v1',
+                model: 'gpt-4o',
+            }],
+            activeInstanceId: 'active-inst',
+        },
+        gemini: { apiKey: 'AIza-config-key', baseUrl: '', model: 'gemini-2.5-flash' },
+        azure: { apiKey: undefined, endpoint: undefined },
+        prompts: {},
+    }),
+    mockGetActiveOpenAIConfig: vi.fn().mockReturnValue({
+        id: 'active-inst', name: 'Default',
+        apiKey: 'sk-config-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o',
+    }),
+}));
 
 // Mock logger
 vi.mock('@/lib/logger', () => ({
@@ -16,6 +50,15 @@ vi.mock('@/lib/logger', () => ({
         box: vi.fn(),
         divider: vi.fn(),
     })),
+}));
+
+// Mock auth + config（route 现在从这些取 apiKey，不再从 query 取）
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: mocks.mockGetCurrentUser,
+}));
+vi.mock('@/lib/config', () => ({
+    getAppConfig: mocks.mockGetAppConfig,
+    getActiveOpenAIConfig: mocks.mockGetActiveOpenAIConfig,
 }));
 
 const mockFetch = vi.fn();
@@ -48,7 +91,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
             }),
         });
 
-        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -61,23 +104,10 @@ describe('GET /api/ai/models - Gemini provider', () => {
         });
         expect(body.models[1].id).toBe('gemini-1.5-pro');
         expect(body.models[2].id).toBe('gemini-2.5-flash');
-    });
 
-    it('应该使用自定义 baseUrl', async () => {
-        mockFetch.mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ models: [] }),
-        });
-
-        const req = makeRequest({
-            provider: 'gemini',
-            apiKey: 'my-key',
-            baseUrl: 'https://custom.google.com',
-        });
-        await GET(req);
-
+        // 验证调用的是从 config 读取的 key（不是 query 里的）
         expect(mockFetch).toHaveBeenCalledWith(
-            'https://custom.google.com/v1beta/models?key=my-key',
+            expect.stringContaining('AIza-config-key'),
             expect.any(Object)
         );
     });
@@ -95,7 +125,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
             }),
         });
 
-        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -114,7 +144,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
             json: async () => ({ models: [] }),
         });
 
-        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -128,7 +158,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
             json: async () => ({}),
         });
 
-        const req = makeRequest({ provider: 'gemini', apiKey: 'test-key' });
+        const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -143,7 +173,7 @@ describe('GET /api/ai/models - Gemini provider', () => {
             text: async () => 'Forbidden',
         });
 
-        const req = makeRequest({ provider: 'gemini', apiKey: 'bad-key' });
+        const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -152,13 +182,38 @@ describe('GET /api/ai/models - Gemini provider', () => {
         expect(body.error).toContain('Gemini API error');
     });
 
-    it('缺少 apiKey 时应返回 400', async () => {
+    it('配置里没有 apiKey 时应返回 400', async () => {
+        mocks.mockGetAppConfig.mockReturnValueOnce({
+            gemini: { apiKey: undefined },
+            openai: { instances: [], activeInstanceId: undefined },
+            azure: {},
+        });
+
         const req = makeRequest({ provider: 'gemini' });
         const res = await GET(req);
         const body = await res.json();
 
         expect(res.status).toBe(400);
-        expect(body.error).toBe('API key is required');
+        expect(body.message || body.error).toContain('API key');
+    });
+
+    it('query 里带 apiKey/baseUrl 应该被拒绝（SSRF 防护）', async () => {
+        const req = makeRequest({ provider: 'gemini', apiKey: 'should-be-rejected', baseUrl: 'http://evil.example.com' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(400);
+    });
+
+    it('未登录用户应返回 401', async () => {
+        mocks.mockGetCurrentUser.mockResolvedValueOnce({
+            ok: false,
+            response: { status: 401, json: () => ({ message: 'Authentication required' }) },
+        });
+
+        const req = makeRequest({ provider: 'gemini' });
+        const res = await GET(req);
+
+        expect(res.status).toBe(401);
     });
 });
 
@@ -179,7 +234,7 @@ describe('GET /api/ai/models - OpenAI provider', () => {
             }),
         });
 
-        const req = makeRequest({ apiKey: 'test-key' });
+        const req = makeRequest({ provider: 'openai' });
         const res = await GET(req);
         const body = await res.json();
 
@@ -197,7 +252,7 @@ describe('GET /api/ai/models - OpenAI provider', () => {
             status: 401,
         });
 
-        const req = makeRequest({ apiKey: 'bad-key' });
+        const req = makeRequest({ provider: 'openai' });
         const res = await GET(req);
         const body = await res.json();
 

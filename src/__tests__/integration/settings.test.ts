@@ -39,6 +39,23 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/config', () => ({
     getAppConfig: mocks.mockGetAppConfig,
     updateAppConfig: mocks.mockUpdateAppConfig,
+    getMaskedAppConfig: vi.fn(() => ({
+        ...mocks.mockGetAppConfig(),
+        openai: {
+            ...mocks.mockGetAppConfig().openai,
+            instances: mocks.mockGetAppConfig().openai!.instances!.map((i: any) => ({ ...i, apiKey: '********' })),
+        },
+        gemini: { ...mocks.mockGetAppConfig().gemini, apiKey: '********' },
+        azure: { ...mocks.mockGetAppConfig().azure, apiKey: '********' },
+    })),
+}));
+
+// Mock auth: 默认已登录
+vi.mock('@/lib/server-auth', () => ({
+    getCurrentUser: vi.fn().mockResolvedValue({
+        ok: true,
+        user: { id: 'user-1', email: 'user@example.com', role: 'admin', isActive: true },
+    }),
 }));
 
 // Import after mocks
@@ -65,8 +82,9 @@ describe('/api/settings', () => {
             const response = await GET();
             const data = await response.json();
 
-            expect(data.openai.instances[0].apiKey).toBe('sk-test-key');
-            expect(data.gemini.apiKey).toBe('AIza-test-key');
+            // P0 安全修复：GET 返回掩码 apiKey，不再暴露明文
+            expect(data.openai.instances[0].apiKey).toBe('********');
+            expect(data.gemini.apiKey).toBe('********');
             expect(data.gemini.model).toBe('gemini-2.5-flash');
         });
 
