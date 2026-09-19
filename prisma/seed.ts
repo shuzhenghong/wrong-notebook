@@ -27,13 +27,15 @@ async function main() {
         return;
     }
 
-    // 没有显式提供密码就绝不创建管理员 —— 避免把弱口令带进任何环境
+    // 构建期（Docker 镜像构建）刻意不创建管理员，也绝不烘焙任何密码：
+    // 管理员账号由容器「首次启动」时的 scripts/seed-admin.js 初始化 ——
+    // 它会自动生成强随机密码并打印到启动日志，且登录后强制改密。
     if (!ADMIN_PASSWORD) {
         console.log(
-            `\n[seed] No admin user exists and DEFAULT_ADMIN_PASSWORD is not set.\n` +
-            `[seed] Refusing to create an admin with a hardcoded password.\n` +
-            `[seed] Set DEFAULT_ADMIN_PASSWORD and re-run, or register a user and run:\n` +
-            `[seed]   node scripts/seed-admin.js\n`
+            `\n[seed] 跳过管理员创建：未设置 DEFAULT_ADMIN_PASSWORD。\n` +
+            `[seed] 这是预期行为 —— 构建期不烘焙管理员密码；\n` +
+            `[seed] 管理员会在容器首次启动时自动创建，密码打印在启动日志中。\n` +
+            `[seed] 本地开发想立即创建：export DEFAULT_ADMIN_PASSWORD=<强密码> 后重跑本命令。\n`
         );
         return;
     }

@@ -49,13 +49,17 @@
 
 #### 1. 启动服务
 
+您可以**零配置**直接启动 —— 只需一条命令，无需预先准备任何环境变量：
+
+- `NEXTAUTH_SECRET`（会话加密密钥）留空时，容器首次启动会**自动生成**并持久化到 `./data/.nextauth_secret`；
+- 初始管理员密码留空时，容器首次启动会**自动生成**，并打印在**启动日志**中。
+
 您可以选择 **直接使用命令** (适合快速测试) 或 **Docker Compose** (适合长期运行)。
 
 **选项 A：直接使用 Docker 命令**
 
 ```bash
 docker run -d --name wrong-notebook \
-  -e NEXTAUTH_SECRET="your_secret_key" \
   -p 3000:3000 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config:/app/config \
@@ -74,14 +78,37 @@ docker run -d --name wrong-notebook \
     ```bash
     docker-compose up -d
     ```
-3.  **查看日志**：
+3.  **查看初始管理员账号**（首次启动会自动创建并打印）：
     ```bash
     docker-compose logs -f
     ```
+    日志中会出现这样的区块：
+    ```
+    ==================================================================
+      首次部署初始化完成 · 管理员账号已创建
+    ------------------------------------------------------------------
+      登录地址 : http://<服务器IP>:3000
+      用户名   : admin@localhost
+      密码     : <自动生成的 16 位随机密码>   <<< 请立即记录
+    ------------------------------------------------------------------
+      * 首次登录后系统会强制要求您修改密码。
+      * 该密码只在创建/重置时打印一次，重启容器不会再次显示。
+      * 凭据已备份到数据卷：/app/data/initial-admin-credentials.txt
+    ==================================================================
+    ```
+    > 密码**只在创建或重置时打印一次**，同时备份到 `./data/initial-admin-credentials.txt`（权限 600）。
 4.  **停止服务**：
     ```bash
     docker-compose down
     ```
+
+#### 2. 忘记管理员密码？
+
+在容器内执行以下命令，会重新生成并打印一个新密码：
+
+```bash
+docker-compose exec wrong-notebook node /app/dist-scripts/scripts/seed-admin.js --reset-password
+```
 
 ### 方式二：本地源码运行
 
@@ -115,8 +142,10 @@ cp .env.example .env
 | 环境变量 | 描述 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `DATABASE_URL` | 数据库连接地址 | `file:./dev.db` | SQLite 数据库路径 |
-| `NEXTAUTH_SECRET` | Auth 密钥 | 无 | 用于加密 Session，生产环境建议设置,可以使用 openssl rand -base64 32 生成一个随机字符串作为密钥 |
+| `NEXTAUTH_SECRET` | Auth 密钥 | 自动生成 | 用于加密 Session。留空时容器首次启动会**自动生成**强随机密钥并保存到数据卷 `./data/.nextauth_secret`（重启后登录态不失效）；多实例部署请显式设置为固定值，可用 `openssl rand -base64 32` 生成 |
 | `NEXTAUTH_URL` | 访问地址 | `http://your-domain-name:3000` | 部署后的访问地址 |
+| `DEFAULT_ADMIN_EMAIL` | 初始管理员邮箱 | `admin@localhost` | 仅在管理员账号不存在时生效 |
+| `DEFAULT_ADMIN_PASSWORD` | 初始管理员密码 | 自动生成 | 留空时首次启动自动生成强随机密码并**打印在启动日志**中；若自行指定则不回显、不落盘 |
 | `AUTH_TRUST_HOST` | 信任主机头 | `true` | 设置为 `true` 时自动推断 URL，适合 Docker/PaaS |
 | `LOG_LEVEL` | 日志级别 | `debug` (开发) / `info` (生产) | 可选值：`trace`, `debug`, `info`, `warn`, `error`, `fatal` |
 | `HTTP_PROXY` | HTTP 代理 | 无 | 设置 HTTP 代理 |
@@ -163,18 +192,43 @@ npx prisma db seed
 
 #### 6. 管理员账户
 
-项目**不再内置任何默认密码**。初始化管理员需先设置环境变量：
+项目**不内置任何默认密码**，管理员账号在**首次启动时自动初始化**：
+
+- **邮箱**：`admin@localhost`（可用 `DEFAULT_ADMIN_EMAIL` 覆盖）
+- **密码**：系统自动生成 16 位强随机密码，并**打印在首次启动日志**中（同时写入 `./data/initial-admin-credentials.txt`，权限 600）
+
+启动日志示例：
+
+```
+==================================================================
+  首次部署初始化完成 · 管理员账号已创建
+------------------------------------------------------------------
+  登录地址 : http://<服务器IP>:3000
+  用户名   : admin@localhost
+  密码     : <自动生成的 16 位随机密码>   <<< 请立即记录
+------------------------------------------------------------------
+  * 首次登录后系统会强制要求您修改密码。
+  * 该密码只在创建/重置时打印一次，重启容器不会再次显示。
+  * 凭据已备份到数据卷：/app/data/initial-admin-credentials.txt
+==================================================================
+```
+
+> - 密码**只在创建或重置时打印一次**；改完密码后建议删除 `initial-admin-credentials.txt`。
+> - 由种子创建的管理员**首次登录会被强制要求修改密码**。
+> - 管理员登录后，可在"设置" -> "用户管理"中管理系统用户。
+
+**想自己指定初始密码？** 设置环境变量即可（此时密码不回显、不落盘）：
 
 ```bash
 export DEFAULT_ADMIN_PASSWORD="<一个足够强的密码>"
 npx prisma db seed     # 或 Docker 启动时传入 DEFAULT_ADMIN_PASSWORD
 ```
 
-- **邮箱**: `admin@localhost`（可用 `DEFAULT_ADMIN_EMAIL` 覆盖）
-- **密码**: 取自 `DEFAULT_ADMIN_PASSWORD`，不会写入日志
+**忘记密码？** 在容器内执行，会重置并打印一个新密码：
 
-> 未设置该变量时不会创建管理员，也不会回退到弱口令。由种子创建的管理员**首次登录会被强制要求修改密码**。
-> 管理员登录后，可在"设置" -> "用户管理"中管理系统用户。
+```bash
+docker-compose exec wrong-notebook node /app/dist-scripts/scripts/seed-admin.js --reset-password
+```
 
 #### 7. 启动开发服务器
 
@@ -262,6 +316,13 @@ npm run dev
   示例:  
   ```bash
   node scripts/reset-password.js user@example.com 123456 
+  ```
+- **重置管理员密码 / 忘记密码时自助找回**:
+  ```bash
+  # 自动生成新密码并打印
+  docker-compose exec wrong-notebook node /app/dist-scripts/scripts/seed-admin.js --reset-password
+  # 或显式指定新密码
+  docker-compose exec wrong-notebook node /app/dist-scripts/scripts/seed-admin.js --reset-password --password=<新密码>
   ```
 
 ## 💾 数据存储与备份

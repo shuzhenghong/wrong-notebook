@@ -30,8 +30,11 @@ services:
       # === 必须配置（请修改） ===
       # 替换为你的实际访问地址
       - NEXTAUTH_URL=https://YOUR_IP_OR_DOMAIN
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?请在 .env 中设置 NEXTAUTH_SECRET}
-      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:?请在 .env 中设置 DEFAULT_ADMIN_PASSWORD}
+      # 以下两项均可留空：留空时首次启动自动生成
+      #   - NEXTAUTH_SECRET       → 自动生成并保存到 ./data/.nextauth_secret
+      #   - DEFAULT_ADMIN_PASSWORD → 自动生成强随机密码，在启动日志中打印
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-}
       - AUTH_TRUST_HOST=true
       
       # === HTTPS 配置 ===

@@ -17,20 +17,31 @@ CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || ech
 # Fix permissions for data and config directories
 chown -R nextjs:nodejs /app/data /app/config
 
-# === 安全加固 ===
-# 强制校验 NEXTAUTH_SECRET（示例值 / 空 / 过短都拒绝）
-if [ -z "$NEXTAUTH_SECRET" ] \
-    || [ "${#NEXTAUTH_SECRET}" -lt 16 ] \
-    || [ "$NEXTAUTH_SECRET" = "your_secret_key" ] \
-    || [ "$NEXTAUTH_SECRET" = "changeme" ]; then
-    echo "[Entrypoint][FATAL] NEXTAUTH_SECRET is missing, too short (<16), or a well-known placeholder."
-    echo "[Entrypoint] Aborting. Set a strong, random secret in your environment and restart."
-    exit 1
-fi
+# === 安全加固：NEXTAUTH_SECRET ===
+# 缺失 / 占位值 / 过短时自动生成强随机密钥并持久化到数据卷，
+# 让首次部署零配置也能启动（此前会直接 FATAL 退出，容器根本起不来）。
+SECRET_FILE="/app/data/.nextauth_secret"
 
-# 如果用户没提供 DEFAULT_ADMIN_PASSWORD，但容器里还没有任何管理员用户，
-# 我们在 entrypoint 层面就拒绝启动 —— 避免 seed-admin.js 硬编码弱密码兜底。
-# （存在 pre-packaged DB 的场景会在上面的 cp 分支里继续走，不会进这里的全新 DB 路径。）
+is_valid_secret() {
+    [ -n "$1" ] \
+        && [ "${#1}" -ge 16 ] \
+        && [ "$1" != "your_secret_key" ] \
+        && [ "$1" != "changeme" ]
+}
+
+if ! is_valid_secret "$NEXTAUTH_SECRET"; then
+    if [ -s "$SECRET_FILE" ]; then
+        NEXTAUTH_SECRET=$(cat "$SECRET_FILE")
+        echo "[Entrypoint] NEXTAUTH_SECRET 未设置或无效，已复用数据卷中的既有密钥: $SECRET_FILE"
+    else
+        NEXTAUTH_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+        ( umask 077; printf '%s' "$NEXTAUTH_SECRET" > "$SECRET_FILE" ) \
+            || echo "[Entrypoint] 警告: 无法写入 $SECRET_FILE，密钥仅本次运行有效"
+        echo "[Entrypoint] NEXTAUTH_SECRET 未设置，已自动生成 64 位随机密钥并保存到 $SECRET_FILE"
+        echo "[Entrypoint] 提示: 多实例部署请显式设置 NEXTAUTH_SECRET；删除该文件会使所有登录会话失效。"
+    fi
+fi
+export NEXTAUTH_SECRET
 
 # Check if the persistent database exists
 if [ ! -s "$TARGET_DB" ]; then
@@ -63,15 +74,16 @@ cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
     echo "[Entrypoint] Migrations completed successfully."
 } || echo "[Entrypoint] Migration failed or no pending migrations."
 
-# Always run seed after migrations to ensure admin user has correct role/isActive.
-# seed-admin.js 只会在 "DB 里已有 admin" 时补 role/isActive，绝不碰密码；
-# 如果 DB 里没有 admin 且 DEFAULT_ADMIN_PASSWORD 没给 → 进程非零退出（避免硬编码弱密码兜底）。
-echo "[Entrypoint] Ensuring admin user exists with correct role..."
+# 首次部署初始化管理员账号。
+# - 未设置 DEFAULT_ADMIN_PASSWORD 时自动生成强随机密码，并在下方部署日志中打印
+#   （同时落盘到 /app/data/initial-admin-credentials.txt，避免日志被冲掉后无法登录）
+# - 管理员已存在时只校正 role/isActive，绝不覆盖用户已修改过的密码
+echo "[Entrypoint] Ensuring admin user exists (首次部署会自动创建账号并打印凭据)..."
 if ! cd /app && node "$SEED_ADMIN_SCRIPT"; then
-    echo "[Entrypoint][FATAL] Admin seed failed. This usually means:"
-    echo "  1) No pre-packaged DB / no existing admin user in DB, AND"
-    echo "  2) DEFAULT_ADMIN_PASSWORD is not set in the environment."
-    echo "  Set DEFAULT_ADMIN_PASSWORD and restart."
+    echo "[Entrypoint][FATAL] Admin seed failed. 常见原因："
+    echo "  1) 数据卷 /app/data 不可写（检查宿主机 ./data 目录权限）"
+    echo "  2) 数据库文件损坏或迁移未完成（见上方 migrate 日志）"
+    echo "  → 修复后重启容器即可，账号初始化会自动重试。"
     exit 1
 fi
 touch "$SEED_MARKER" 2>/dev/null
