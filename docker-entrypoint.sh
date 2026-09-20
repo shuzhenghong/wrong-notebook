@@ -83,7 +83,16 @@ if ! cd /app && node "$SEED_ADMIN_SCRIPT"; then
     echo "[Entrypoint][FATAL] Admin seed failed. 常见原因："
     echo "  1) 数据卷 /app/data 不可写（检查宿主机 ./data 目录权限）"
     echo "  2) 数据库文件损坏或迁移未完成（见上方 migrate 日志）"
+    echo "  3) bcryptjs 模块缺失 — 检查 node_modules/bcryptjs/umd/ 是否存在"
+    echo "     → 这是 Next.js standalone 裁剪导致的已知问题，需确认 Dockerfile 已显式复制 bcryptjs"
+    echo ""
     echo "  → 修复后重启容器即可，账号初始化会自动重试。"
+
+    # 附加诊断信息，帮助快速定位
+    echo ""
+    echo "[Entrypoint] --- 诊断 ---"
+    echo "[Entrypoint] node_modules/bcryptjs 内容: $(ls /app/node_modules/bcryptjs/ 2>/dev/null || echo '不存在')"
+    echo "[Entrypoint] node_modules/bcryptjs/umd 内容: $(ls /app/node_modules/bcryptjs/umd/ 2>/dev/null || echo '不存在')"
     exit 1
 fi
 touch "$SEED_MARKER" 2>/dev/null

@@ -75,6 +75,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-common .
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
 
+# bcryptjs v3 的 package.json 声明 "main": "umd/index.js" (CommonJS require 入口)，
+# 但其 exports 字段只指向根目录 index.js (ESM import)。Next.js standalone 模式按 ESM 入口分析
+# 依赖后会裁剪掉 umd/ 目录，导致 seed-admin.js（CommonJS 方式 require）崩溃。
+# 这里显式复制完整包，确保 umd/index.js 可用。
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
+
 # Copy Prisma schema and migrations for runtime usage if needed (e.g. for migrations)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
