@@ -1,5 +1,23 @@
 const { PrismaClient } = require('@prisma/client');
-const { hash } = require('bcryptjs');
+
+// bcryptjs v3 的 package.json 声明 "main": "umd/index.js" (CommonJS 入口)，
+// 但其 exports 字段只指向根目录 index.js (ESM)。Next.js standalone 模式按 ESM 入口裁剪后，
+// umd/ 目录可能缺失。这里做防御性加载：先按标准 require，如果失败再明确报出诊断信息。
+let hash;
+try {
+    const bcrypt = require('bcryptjs');
+    hash = bcrypt.hash;
+} catch (e) {
+    console.error('[seed-admin][FATAL] 无法加载 bcryptjs 模块');
+    console.error('[seed-admin]   错误信息:', e.message);
+    console.error('[seed-admin]   常见原因:');
+    console.error('[seed-admin]     1) Next.js standalone 模式裁剪了 bcryptjs/umd/ 目录');
+    console.error('[seed-admin]        → Dockerfile runner 阶段需要显式复制完整 bcryptjs 包');
+    console.error('[seed-admin]     2) node_modules 挂载损坏或权限问题');
+    console.error('[seed-admin]   诊断命令: ls -la node_modules/bcryptjs/');
+    process.exit(2);
+}
+
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
