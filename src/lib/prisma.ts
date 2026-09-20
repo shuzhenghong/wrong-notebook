@@ -16,11 +16,18 @@ export const prisma =
 // - synchronous=NORMAL 在 WAL 模式下是安全推荐值：写入不再每次 fsync，
 //   只在 checkpoint 时落盘，事务原子性仍由 WAL 保证（掉电最多丢最后一个 checkpoint 后的事务）
 if (process.env.NEXT_RUNTIME === 'nodejs') {
-    // 使用 $executeRawUnsafe 发 PRAGMA（SQLite 特有）
+    // 注意：SQLite 的 PRAGMA（含带赋值形式）会返回一行结果（生效值），
+    // 必须用 $queryRawUnsafe；$executeRaw* 遇到"返回结果集的语句"会直接报错：
+    // "Execute returned results, which is not allowed in SQLite."
     Promise.resolve()
-        .then(() => prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL;'))
-        .then(() => prisma.$executeRawUnsafe('PRAGMA busy_timeout=5000;'))
-        .then(() => prisma.$executeRawUnsafe('PRAGMA synchronous=NORMAL;'))
+        .then(async () => {
+            const mode = await prisma.$queryRawUnsafe<Array<{ journal_mode: string }>>('PRAGMA journal_mode=WAL;');
+            if (mode[0]?.journal_mode?.toLowerCase() !== 'wal') {
+                console.warn('[prisma] WAL mode not active, got:', mode[0]);
+            }
+        })
+        .then(() => prisma.$queryRawUnsafe('PRAGMA busy_timeout=5000;'))
+        .then(() => prisma.$queryRawUnsafe('PRAGMA synchronous=NORMAL;'))
         .catch((err) => {
             // 如果 DB 文件还没建好就调用（首次启动），忽略错误
             console.warn('[prisma] failed to apply SQLite PRAGMA (may be first start):', err.message);
