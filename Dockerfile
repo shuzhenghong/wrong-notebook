@@ -75,11 +75,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/onnxruntime-common .
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sharp ./node_modules/sharp
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img ./node_modules/@img
 
-# bcryptjs v3 的 package.json 声明 "main": "umd/index.js" (CommonJS require 入口)，
-# 但其 exports 字段只指向根目录 index.js (ESM import)。Next.js standalone 模式按 ESM 入口分析
-# 依赖后会裁剪掉 umd/ 目录，导致 seed-admin.js（CommonJS 方式 require）崩溃。
-# 这里显式复制完整包，确保 umd/index.js 可用。
+# 以下包的 package.json 存在 "main"（CJS）与 "exports"（ESM）指向不同文件的情况。
+# Next.js standalone 模式按 ESM exports 追踪依赖后会裁剪掉 main 指向的文件，
+# 导致 CommonJS require 方式崩溃（seed-admin.js 用的就是 CJS require）。
+# 显式复制完整包，避免运行时因裁剪缺文件。
+#   - bcryptjs: main=umd/index.js, exports.import=./index.js
+#   - tiny-invariant: main=dist/tiny-invariant.cjs.js, exports.import=./dist/esm/tiny-invariant.js
+#     （tiny-invariant 是 @gutenye/ocr-node 的传递依赖，ocr-node 在 serverExternalPackages 中）
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tiny-invariant ./node_modules/tiny-invariant
 
 # Copy Prisma schema and migrations for runtime usage if needed (e.g. for migrations)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma

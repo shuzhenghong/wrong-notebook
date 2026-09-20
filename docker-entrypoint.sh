@@ -79,7 +79,7 @@ cd /app && $PRISMA_BIN migrate deploy --schema=./prisma/schema.prisma && {
 #   （同时落盘到 /app/data/initial-admin-credentials.txt，避免日志被冲掉后无法登录）
 # - 管理员已存在时只校正 role/isActive，绝不覆盖用户已修改过的密码
 echo "[Entrypoint] Ensuring admin user exists (首次部署会自动创建账号并打印凭据)..."
-if ! cd /app && node "$SEED_ADMIN_SCRIPT"; then
+if cd /app && ! node "$SEED_ADMIN_SCRIPT"; then
     echo "[Entrypoint][FATAL] Admin seed failed. 常见原因："
     echo "  1) 数据卷 /app/data 不可写（检查宿主机 ./data 目录权限）"
     echo "  2) 数据库文件损坏或迁移未完成（见上方 migrate 日志）"
