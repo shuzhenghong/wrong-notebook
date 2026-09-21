@@ -83,3 +83,13 @@ upload_test_output*.txt
 /.cursorrulers/
 *.patch
 openclaw-integration.patch
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+python-backend/.env
+python-backend/app.db
+python-backend/wrong_notebook.db
+*.egg-info/
+.venv/
