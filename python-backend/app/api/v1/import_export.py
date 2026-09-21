@@ -15,7 +15,7 @@ from ...utils.dependencies import get_current_user, require_admin
 from ...utils.logger import get_logger
 
 
-router = APIRouter()
+router = APIRouter(prefix="/import")
 logger = get_logger("import")
 
 
@@ -27,7 +27,7 @@ def _uid() -> str:
 # POST /api/import — 导入错题数据
 # =====================================================================
 
-@router.post("/import")
+@router.post("")
 def import_data(
     body: dict,
     db: Session = Depends(get_db),

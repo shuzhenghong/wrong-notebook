@@ -122,3 +122,65 @@ def user_nextjs_compat_patch(
     db.commit()
     db.refresh(user)
     return user
+
+
+
+# =====================================================================
+# /api/settings — 用户配置 (不在 auth_router 挂载, 直接在 api_router 层)
+# =====================================================================
+
+def _mask(k):
+    if not k: return k
+    return "********"
+
+def _get_app_cfg():
+    import json
+    try:
+        with open("app-config.json") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+    def mask(c):
+        if isinstance(c, dict):
+            return {k: (mask(v) if "key" not in k.lower() and k not in ("endpoint","baseUrl") else _mask(v) if isinstance(v, str) else v) for k, v in c.items()}
+        return c
+    return mask(cfg)
+
+def _update_app_cfg(body):
+    import json
+    try:
+        with open("app-config.json") as f:
+            cur = json.load(f)
+    except Exception:
+        cur = {}
+    def merge(t, s):
+        for k, v in s.items():
+            if isinstance(v, dict) and isinstance(t.get(k), dict):
+                merge(t[k], v)
+            else:
+                t[k] = v
+        return t
+    merge(cur, body)
+    with open("app-config.json", "w") as f:
+        json.dump(cur, f, indent=2, ensure_ascii=False)
+    return _get_app_cfg()
+
+
+@router.get("/settings")
+def get_settings_py(
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """GET /api/settings — 返回掩码后的配置."""
+    return _get_app_cfg()
+
+
+@router.post("/settings")
+def post_settings_py(
+    body: dict,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """POST /api/settings — 更新配置."""
+    try:
+        return _update_app_cfg(body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
