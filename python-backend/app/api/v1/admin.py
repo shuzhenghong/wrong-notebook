@@ -124,3 +124,39 @@ def system_reset(
     db.query(Subject).delete(synchronize_session=False)
     db.commit()
     return {"message": "Reset complete (admin preserved)"}
+
+
+@router.post("/migrate-tags")
+def admin_migrate_tags(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> dict:
+    """标签系统迁移脚本 — 原 src/app/api/admin/migrate-tags/route.ts.
+    
+    把 error_items 上的 knowledge_points (JSON) 解析成 KnowledgeTag 行.
+    """
+    import json
+    from ...models import KnowledgeTag
+
+    items = (
+        db.query(ErrorItem)
+        .filter(ErrorItem.knowledge_points.isnot(None))
+        .all()
+    )
+    migrated = 0
+    for item in items:
+        try:
+            points = json.loads(item.knowledge_points) if item.knowledge_points else []
+            if isinstance(points, list):
+                for p in points:
+                    name = p if isinstance(p, str) else p.get("name")
+                    if not name:
+                        continue
+                    from ...models.error_item import error_item_tags
+                    tag = KnowledgeTag(name=name, user_id=item.user_id)
+                    db.add(tag)
+                    migrated += 1
+        except Exception:
+            pass
+    db.commit()
+    return {"message": "Migration complete", "migrated_tags": migrated}

@@ -13,6 +13,9 @@ from .practice import router as practice_router
 from .stats import router as stats_router
 from .admin import router as admin_router
 from .system import router as system_router
+from .analytics import router as analytics_router
+from .ai_extras import router as ai_extras_router
+from .import_export import router as import_export_router
 
 
 api_router = APIRouter(prefix="/api")
@@ -25,6 +28,9 @@ api_router.include_router(tags_router, prefix="/tags", tags=["tags"])
 api_router.include_router(practice_router, prefix="/practice", tags=["practice"])
 api_router.include_router(stats_router, prefix="/stats", tags=["stats"])
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
+api_router.include_router(analytics_router, tags=["analytics"])  # /analytics, /settings
+api_router.include_router(ai_extras_router, tags=["ai-extras"])  # /reanswer, /geogebra-analyze, /ai/models, /ai/test
+api_router.include_router(import_export_router, prefix="", tags=["import-export"])  # /import, /admin/migrate-tags
 api_router.include_router(system_router)  # /version, /register/status
 
 # === Phase 3a 试点迁移: 这些端点已迁到 FastAPI, 删除 Next.js 本地 route.ts 即生效 ===
