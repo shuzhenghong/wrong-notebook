@@ -1,5 +1,5 @@
 import { AzureOpenAI } from "openai";
-import { AIService, ParsedQuestion, DifficultyLevel, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, OnDelta } from "./types";
 import { DEFAULT_ANALYZE_TEXT_TEMPLATE } from './prompts';
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateReanswerPrompt, generateGeogebraPrompt } from './prompts';
 import { getAppConfig } from '../config';
