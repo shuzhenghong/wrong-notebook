@@ -98,3 +98,27 @@ def change_password(
     user.must_change_password = False
     db.commit()
     return {"message": "Password changed"}
+
+
+# =====================================================================
+# Next.js 兼容层 — Next.js 前端调 /api/user (不是 /api/user/me)
+# =====================================================================
+
+@router.get("/user", response_model=UserOut)
+def user_nextjs_compat_get(user: User = Depends(get_current_user)) -> User:
+    """Next.js 兼容: GET /api/user → /api/user/me."""
+    return user
+
+
+@router.patch("/user", response_model=UserOut)
+def user_nextjs_compat_patch(
+    payload: UserUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Next.js 兼容: PATCH /api/user → /api/user/me."""
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    db.commit()
+    db.refresh(user)
+    return user

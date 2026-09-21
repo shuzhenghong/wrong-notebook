@@ -217,20 +217,20 @@ def update_error_item(
 
 
 # ---------- 删除 ----------
-@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_error_item(
-    item_id: str,
+@router.delete("/clear")
+def clear_all_nextjs_compat(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> None:
-    item = db.get(ErrorItem, item_id)
-    if not item or item.user_id != user.id:
-        raise HTTPException(status_code=404, detail="ErrorItem not found")
-    db.delete(item)
+) -> dict:
+    """Next.js 兼容端点 — 委托给 clear_all 逻辑."""
+    deleted = (
+        db.query(ErrorItem)
+        .filter(ErrorItem.user_id == user.id)
+        .delete(synchronize_session=False)
+    )
     db.commit()
+    return {"message": f"Cleared {deleted} items", "count": deleted}
 
-
-# ---------- 批量删除 ----------
 @router.post("/batch-delete", response_model=MessageResponse)
 def batch_delete(
     payload: dict[str, list[str]],
@@ -262,3 +262,24 @@ def clear_all(
     )
     db.commit()
     return MessageResponse(message=f"Cleared {deleted} items")
+
+
+# =====================================================================
+# Next.js 兼容层 — Next.js 前端调 /api/error-items/clear
+# 路径不同但语义相同 (Python 原生 DELETE /api/error-items)
+# =====================================================================
+
+@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_error_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    item = db.get(ErrorItem, item_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="ErrorItem not found")
+    db.delete(item)
+    db.commit()
+
+
+# ---------- 批量删除 ----------
