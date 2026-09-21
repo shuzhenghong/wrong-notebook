@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
+import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, OnDelta } from "./types";
 import { DEFAULT_ANALYZE_TEXT_TEMPLATE } from './prompts';
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt } from './prompts';
 import { safeParseParsedQuestion } from './schema';
@@ -213,7 +213,6 @@ export class GeminiProvider implements AIService {
 
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
-                generationConfig: { maxOutputTokens: 2500 },
                 contents: [
                     {
                         text: prompt
@@ -272,7 +271,6 @@ export class GeminiProvider implements AIService {
         try {
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
-                generationConfig: { maxOutputTokens: 2500 },
                 contents: fullPrompt,
             }));
 
@@ -304,7 +302,6 @@ export class GeminiProvider implements AIService {
         try {
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
-                generationConfig: { maxOutputTokens: 2048 },
                 contents: prompt
             }));
 
@@ -358,7 +355,6 @@ export class GeminiProvider implements AIService {
 
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
-                generationConfig: { maxOutputTokens: 2048 },
                 contents
             }));
 
@@ -403,7 +399,6 @@ export class GeminiProvider implements AIService {
         try {
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
-                generationConfig: { maxOutputTokens: 2048 },
                 contents: prompt
             }));
 

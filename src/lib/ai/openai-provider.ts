@@ -372,7 +372,7 @@ export class OpenAIProvider implements AIService {
         logger.info({ ocrLen: ocrText.length, subject, grade, streaming: !!onDelta }, 'Analyze Text (OCR) — 纯文本模式，省钱');
 
         try {
-            const messages = [
+            const messages: any = [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: `以下是本地 OCR 识别的题目文本：\n\n${ocrText}` },
             ];
@@ -484,7 +484,7 @@ export class OpenAIProvider implements AIService {
                 logger.debug({ imageLength: imageUrl.length }, 'Image added to request');
                 userContent = [
                     { type: "text", text: "请结合图片和题目描述提供答案和解析。" },
-                    { type: "image_url", image_url: { url: imageUrl, detail: "low" } }
+                    { type: "image_url", image_url: { url: imageUrl, detail: "low" } as any }
                 ];
             } else {
                 logger.debug({ imageBase64Type: typeof imageBase64, hasValue: !!imageBase64 }, 'No image data');
