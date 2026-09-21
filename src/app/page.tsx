@@ -349,7 +349,10 @@ function HomeContent() {
                 errorMessage: error?.data?.message || error?.message || String(error),
                 errorData: error?.data,
             });
-            alert(t.common?.messages?.saveFailed || 'Failed to save');
+            const detail = error?.data?.message || error?.message;
+            alert(detail
+                ? `${t.common?.messages?.saveFailed || '保存失败'}：${detail}`
+                : (t.common?.messages?.saveFailed || '保存失败'));
         }
     };
 
