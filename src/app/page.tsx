@@ -37,6 +37,10 @@ function HomeContent() {
     const initialNotebookId = searchParams.get("notebook");
     const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([]);
     const [autoSelectedNotebookId, setAutoSelectedNotebookId] = useState<string | null>(null);
+    // 验证 initialNotebookId 是否属于当前用户，不属于则忽略（避免使用别人的错题本 ID 导致保存 403）
+    const [validatedInitialNotebookId, setValidatedInitialNotebookId] = useState<string | null>(null);
+    // 实际生效的 notebookId：先经校验的 URL 参数，再 fallback 到 AI 自动选择
+    const resolvedNotebookId = validatedInitialNotebookId || autoSelectedNotebookId;
 
     const [config, setConfig] = useState<AppConfig | null>(null);
 
@@ -66,7 +70,21 @@ function HomeContent() {
     useEffect(() => {
         // Fetch notebooks for auto-selection
         apiClient.get<Notebook[]>("/api/notebooks")
-            .then(data => setNotebooks(data))
+            .then(data => {
+                setNotebooks(data);
+                // 校验 URL 中的 notebook 参数是否属于当前用户
+                if (initialNotebookId) {
+                    const belongsToUser = data.some(n => n.id === initialNotebookId);
+                    if (belongsToUser) {
+                        setValidatedInitialNotebookId(initialNotebookId);
+                    } else {
+                        frontendLogger.warn('[HomeInit]', 'Ignoring invalid notebook param (does not belong to user)', {
+                            notebookId: initialNotebookId,
+                        });
+                        setValidatedInitialNotebookId(null);
+                    }
+                }
+            })
             .catch(err => console.error("Failed to fetch notebooks:", err));
 
         // Fetch settings for timeouts
@@ -181,7 +199,7 @@ function HomeContent() {
             const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
                 imageBase64: base64Image,
                 language: language,
-                subjectId: initialNotebookId || autoSelectedNotebookId || undefined
+                subjectId: resolvedNotebookId || undefined
             }, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[HomeAnalyze]', 'API response received, validating data', {
@@ -331,7 +349,10 @@ function HomeContent() {
                 errorMessage: error?.data?.message || error?.message || String(error),
                 errorData: error?.data,
             });
-            alert(t.common?.messages?.saveFailed || 'Failed to save');
+            const detail = error?.data?.message || error?.message;
+            alert(detail
+                ? `${t.common?.messages?.saveFailed || '保存失败'}：${detail}`
+                : (t.common?.messages?.saveFailed || '保存失败'));
         }
     };
 
@@ -343,7 +364,7 @@ function HomeContent() {
             setAnalysisStep('analyzing');
 
             // Infer subject from auto-selected notebook
-            const targetNotebookId = initialNotebookId || autoSelectedNotebookId;
+            const targetNotebookId = resolvedNotebookId;
             const matchedNotebook = targetNotebookId
                 ? notebooks.find(n => n.id === targetNotebookId)
                 : undefined;
@@ -506,10 +527,10 @@ function HomeContent() {
                 </div>
 
                 {/* Action Center */}
-                <div className={initialNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 md:grid-cols-4 gap-4"}>
+                <div className={resolvedNotebookId ? "flex justify-center mb-6" : "grid grid-cols-2 md:grid-cols-4 gap-4"}>
                     <Button
                         size="lg"
-                        className={`h-auto py-4 text-base shadow-sm hover:shadow-md transition-all ${initialNotebookId ? "w-full max-w-md" : ""}`}
+                        className={`h-auto py-4 text-base shadow-sm hover:shadow-md transition-all ${resolvedNotebookId ? "w-full max-w-md" : ""}`}
                         variant={step === "upload" ? "default" : "secondary"}
                         onClick={() => { setStep("upload"); setInputMode("image"); }}
                     >
@@ -519,7 +540,7 @@ function HomeContent() {
                         </div>
                     </Button>
 
-                    {!initialNotebookId && (
+                    {!resolvedNotebookId && (
                         <>
                             <Link href="/notebooks" className="w-full">
                                 <Button
@@ -610,18 +631,18 @@ function HomeContent() {
                                 isAnalyzing={analysisStep !== 'idle'}
                                 initialText={ocrText}
                                 defaultNotebookName={
-                                    (initialNotebookId || autoSelectedNotebookId)
-                                        ? notebooks.find(n => n.id === (initialNotebookId || autoSelectedNotebookId))?.name
+                                    resolvedNotebookId
+                                        ? notebooks.find(n => n.id === resolvedNotebookId)?.name
                                         : undefined
                                 }
                             />
                         ) : (
                             <DirectTextEditor
                                 onSubmit={handleDirectSave}
-                                defaultNotebookId={initialNotebookId || autoSelectedNotebookId || undefined}
+                                defaultNotebookId={resolvedNotebookId || undefined}
                                 defaultNotebookName={
-                                    (initialNotebookId || autoSelectedNotebookId)
-                                        ? notebooks.find(n => n.id === (initialNotebookId || autoSelectedNotebookId))?.name
+                                    resolvedNotebookId
+                                        ? notebooks.find(n => n.id === resolvedNotebookId)?.name
                                         : undefined
                                 }
                                 isSaving={analysisStep === 'saving'}
@@ -646,7 +667,7 @@ function HomeContent() {
                         onSave={handleSave}
                         onCancel={() => setStep("upload")}
                         imagePreview={currentImage}
-                        initialSubjectId={initialNotebookId || autoSelectedNotebookId || undefined}
+                        initialSubjectId={resolvedNotebookId || undefined}
                         aiTimeout={aiTimeout}
                     />
                 )}

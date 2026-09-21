@@ -29,6 +29,11 @@ export function NotebookSelector({ value, onChange, className }: NotebookSelecto
             try {
                 const data = await apiClient.get<Notebook[]>("/api/notebooks");
                 setNotebooks(data);
+                // 如果传入的 value 不在当前用户 notebook 列表里，通知父组件清空
+                if (value && !data.some(n => n.id === value)) {
+                    console.warn('[NotebookSelector]', 'value does not belong to current user, clearing');
+                    onChange('');
+                }
             } catch (error) {
                 console.error("Failed to fetch notebooks:", error);
             } finally {
@@ -37,10 +42,14 @@ export function NotebookSelector({ value, onChange, className }: NotebookSelecto
         };
 
         fetchNotebooks();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // 只有 value 确实在当前用户 notebook 列表里才使用，否则置 undefined 显示 placeholder
+    const effectiveValue = value && notebooks.some(n => n.id === value) ? value : undefined;
+
     return (
-        <Select value={value} onValueChange={onChange}>
+        <Select value={effectiveValue} onValueChange={onChange}>
             <SelectTrigger className={className}>
                 <div className="flex items-center gap-2">
                     <BookOpen className="h-4 w-4 text-muted-foreground" />

@@ -81,9 +81,18 @@ export function CorrectionEditor({ initialData, onSave, onCancel, imagePreview, 
 
     // Fetch user info and calculate grade on mount
     useEffect(() => {
-        // Fetch notebooks for mapping
+        // Fetch notebooks for mapping，并校验 initialSubjectId 是否属于当前用户
         apiClient.get<Notebook[]>("/api/notebooks")
-            .then(setNotebooks)
+            .then(data => {
+                setNotebooks(data);
+                if (initialSubjectId && !data.some(n => n.id === initialSubjectId)) {
+                    // 传入的 initialSubjectId 不在当前用户的错题本列表中，清空它以避免保存时命中 403
+                    frontendLogger.warn('[CorrectionEditor]', 'Clearing initialSubjectId - does not belong to user', {
+                        initialSubjectId,
+                    });
+                    setData(prev => ({ ...prev, subjectId: undefined }));
+                }
+            })
             .catch(err => console.error("Failed to fetch notebooks:", err));
 
         apiClient.get<UserProfile>("/api/user")

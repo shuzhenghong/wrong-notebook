@@ -363,9 +363,12 @@ export default function AddErrorPage() {
 
             alert(t.common.messages?.saveSuccess || 'Saved!');
             router.push(`/notebooks/${notebookId}`);
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            alert(t.common.messages?.saveFailed || 'Save failed');
+            const detail = error?.data?.message || error?.message;
+            alert(detail
+                ? `${t.common.messages?.saveFailed || '保存失败'}：${detail}`
+                : (t.common.messages?.saveFailed || '保存失败'));
         }
     };
 
