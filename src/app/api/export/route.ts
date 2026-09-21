@@ -43,7 +43,7 @@ export async function GET(req: Request) {
 
         const reviewSchedules = await prisma.reviewSchedule.findMany({
             where: exportAll
-                ? { errorItem: { userId: { not: undefined } } }
+                ? {}
                 : { errorItem: { userId: user.id } },
         });
 
