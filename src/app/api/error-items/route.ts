@@ -144,11 +144,19 @@ export async function POST(req: Request) {
         const tagConnections: { id: string }[] = [];
 
         // 推断学科
-        const subject = await prisma.subject.findUnique({ where: { id: subjectId || '' } });
+        const subject = subjectId
+            ? await prisma.subject.findUnique({ where: { id: subjectId } })
+            : null;
         // 归属校验：不能把错题挂到别人的错题本上（仅数据完整性，错题本身仍属当前用户）
-        if (subject && subject.userId !== user.id) {
-            logger.warn({ userId: user.id, subjectId }, 'Rejected error item create: subject belongs to another user');
-            return forbidden("Not authorized to use this notebook");
+        if (subjectId) {
+            if (!subject) {
+                logger.warn({ userId: user.id, subjectId }, 'Rejected error item create: subject not found');
+                return validationError("Selected notebook not found");
+            }
+            if (subject.userId !== user.id) {
+                logger.warn({ userId: user.id, subjectId }, 'Rejected error item create: subject belongs to another user');
+                return forbidden("Not authorized to use this notebook");
+            }
         }
         const subjectKey = inferSubjectFromName(subject?.name ?? null) || 'other';
         logger.debug({ subjectId, subjectName: subject?.name, subjectKey }, 'Subject inferred');
