@@ -1,36 +1,44 @@
 /**
  * 渐进迁移专用 —— Next.js → FastAPI 的 catch-all 转发层.
  *
- * 匹配规则:
- *   Next.js 路由从"最具体"到"最泛化"匹配. 只要本地存在 route.ts,
- *   就优先走本地实现, 这个 catch-all 不会被触发.
- *   —— 所以本文件对现有 Next.js API 完全透明, 零侵入.
+ * 关键设计:
+ *   1. 用 Node.js 原生 http/https, **不经过 Next.js undici 全局代理**
+ *      (global-agent/undici 的 setGlobalDispatcher 不尊重 NO_PROXY,
+ *      导致 fetch("http://localhost:8000") 被送到 HTTP_PROXY 服务器)
  *
- * 迁移动作 (物理级, 可随时回滚):
- *   想把某个 API 交给 FastAPI → 物理删除或重命名对应的 route.ts
- *   回滚 → 把 route.ts 改回来即可
+ *   2. Next.js 路由匹配优先级:
+ *      有本地 route.ts → 本地处理 (不进 catch-all)
+ *      没有 route.ts  → 落回本文件 → 转发到 FastAPI
  *
- * 环境变量:
- *   PYTHON_PROXY_ENABLED = true   启用转发 (默认 false, 未启用时返回 404)
- *   PYTHON_BACKEND_URL   目标后端 (默认 http://localhost:8000)
+ *   3. NextAuth 桥接: catch-all 解析 session cookie → X-Forwarded-User
+ *      FastAPI 侧 lazy mirror 用户自动创建
+ *
+ *   迁移动作 = 物理删除 src/app/api/<target>/route.ts
+ *   回滚    = git checkout src/app/api/<target>/route.ts
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
+import http from "node:http";
+import https from "node:https";
+import { URL } from "node:url";
 
 export const runtime = "nodejs";
 
 const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:8000";
 const PROXY_ENABLED = process.env.PYTHON_PROXY_ENABLED === "true";
 
-/** NextAuth session 解析失败 / 用户信息. */
+const NO_PROXY_PREFIXES = [
+  "/api/auth/",      // NextAuth 自己的登录/会话
+  "/api/python/",     // rewrites 已经截走
+];
+
 interface ProxyUser {
   id: string;
   email?: string;
   role: string;
 }
 
-/** 从 NextAuth cookie 拿到用户, 拿不到返回 null (公开请求). */
 async function resolveUser(req: NextRequest): Promise<ProxyUser | null> {
   try {
     const token = await getToken({
@@ -49,11 +57,66 @@ async function resolveUser(req: NextRequest): Promise<ProxyUser | null> {
   }
 }
 
-/** 白名单: 不转发给 FastAPI 的路径 (必须保留 Next.js 本地行为). */
-const NO_PROXY_PREFIXES = [
-  "/api/auth/",      // NextAuth 自己的登录/会话
-  "/api/python/",     // rewrites 已经截走, 不该再进这里
-];
+/** 绕开 undici 全局代理的转发 (用 Node.js http.request). */
+function forwardViaNodeHttp(
+  method: string,
+  backendUrl: string,
+  headers: Record<string, string>,
+  body: Buffer | null,
+): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(backendUrl);
+    const lib = url.protocol === "https:" ? https : http;
+
+    const reqHeaders: Record<string, string> = {
+      ...headers,
+      host: url.host,
+    };
+
+    const req = lib.request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        method,
+        headers: reqHeaders,
+        timeout: 120_000,
+      },
+      (res) => {
+        // 收集响应体
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          // 归一化 headers 为 Record<string, string> (只取最后一个值)
+          const normalized: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (k.toLowerCase() === "set-cookie") continue; // 不转发 cookie
+            if (Array.isArray(v)) {
+              normalized[k] = v.join(", ");
+            } else if (v) {
+              normalized[k] = String(v);
+            }
+          }
+          resolve({
+            status: res.statusCode || 500,
+            headers: normalized,
+            body: Buffer.concat(chunks).toString("utf-8"),
+          });
+        });
+      },
+    );
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Upstream timeout"));
+    });
+
+    if (body) req.write(body);
+    req.end();
+  });
+}
 
 async function proxy(
   method: string,
@@ -67,82 +130,63 @@ async function proxy(
     );
   }
 
-  // 路径安全检查
   const joined = "/" + pathSegments.join("/");
   if (NO_PROXY_PREFIXES.some((p) => joined.startsWith(p))) {
-    return NextResponse.json({ error: "Path not proxied" }, { status: 404 });
+    return NextResponse.json({ error: "Path not proxied (handled locally)" }, { status: 404 });
   }
 
   const user = await resolveUser(req);
 
-  // 构造转发请求
   const backendUrl = `${PYTHON_BACKEND_URL}/api/${pathSegments.join("/")}${req.nextUrl.search}`;
 
-  // 过滤掉 Next.js 内部 headers, 只保留有意义的
+  // 构造转发 headers (过滤 Next.js 内部 headers)
   const forwardHeaders: Record<string, string> = {};
   const skipHeaders = new Set([
-    "host",
-    "connection",
-    "content-length",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-port",
-    "x-forwarded-proto",
+    "host", "connection", "content-length", "x-forwarded-for",
+    "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
   ]);
   req.headers.forEach((value, key) => {
     if (skipHeaders.has(key.toLowerCase())) return;
     forwardHeaders[key] = value;
   });
 
-  // 把 NextAuth 用户信息以 base64 JSON 编码塞过去 — FastAPI 侧信任它
-  if (user) {
-    const encoded = Buffer.from(JSON.stringify(user)).toString("base64");
-    forwardHeaders["x-forwarded-user"] = encoded;
-  } else {
-    // 公开请求也显式告诉后端: 没有用户
-    forwardHeaders["x-forwarded-user"] = "anonymous";
+  // NextAuth 用户 → X-Forwarded-User
+  // 关键: 如果原始请求已经带了 x-forwarded-user (测试/调试场景), 尊重它;
+  //       否则注入我们从 NextAuth session 解析出来的用户
+  const alreadyHasForwarded = forwardHeaders["x-forwarded-user"] !== undefined;
+  if (!alreadyHasForwarded) {
+    if (user) {
+      forwardHeaders["x-forwarded-user"] = Buffer.from(JSON.stringify(user)).toString("base64");
+    } else {
+      forwardHeaders["x-forwarded-user"] = "anonymous";
+    }
   }
 
-  // 读 body (GET/HEAD 没有 body)
-  let body: BodyInit | undefined;
+  // 读 body (GET/HEAD 无 body)
+  let body: Buffer | null = null;
   if (method !== "GET" && method !== "HEAD") {
-    body = await req.text();
-    if (!body) body = undefined;
+    const text = await req.text();
+    body = text ? Buffer.from(text) : null;
+    if (body && !forwardHeaders["content-length"]) {
+      forwardHeaders["content-length"] = String(body.length);
+    }
   }
 
   try {
-    const backendResp = await fetch(backendUrl, {
-      method,
-      headers: forwardHeaders,
-      body,
-      signal: AbortSignal.timeout(120_000), // 2min 超时
-    });
-
-    // 透传响应
-    const respHeaders = new Headers();
-    backendResp.headers.forEach((value, key) => {
-      // 不转发 set-cookie — Next.js 和 FastAPI 各自管理 cookie
-      if (key.toLowerCase() === "set-cookie") return;
-      respHeaders.set(key, value);
-    });
-
-    const text = await backendResp.text();
-    return new Response(text, {
-      status: backendResp.status,
-      statusText: backendResp.statusText,
-      headers: respHeaders,
+    const resp = await forwardViaNodeHttp(method, backendUrl, forwardHeaders, body);
+    return new Response(resp.body, {
+      status: resp.status,
+      headers: resp.headers,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
-      { error: "Proxy error", detail: msg },
+      { error: "Proxy error", detail: msg, backendUrl },
       { status: 502 },
     );
   }
 }
 
-// ------- HTTP method handlers -------
-// 所有 handler 签名相同: 拿到 Next.js 解析好的 catch-all path segments
 type Params = { params: Promise<{ path: string[] }> };
 
 export async function GET(req: NextRequest, { params }: Params) {

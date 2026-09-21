@@ -103,3 +103,91 @@ def by_subject(
         s = db.get(Subject, sid)
         result.append({"subject_id": sid, "subject_name": s.name if s else "(deleted)", "count": cnt})
     return result
+
+
+# =====================================================================
+# Next.js 兼容层 — 保持前端代码零改动
+# /api/stats/practice      (Next.js 旧路径, 练习统计 dashboard)
+# /api/stats/practice/clear (Next.js 旧路径, 清除练习记录)
+# =====================================================================
+
+@router.get("/practice")
+def practice_stats_nextjs_compat(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Next.js 前端调用的练习统计 — 与 /api/practice/* 并行存在."""
+    from sqlalchemy import and_, or_
+    from datetime import date
+    from calendar import monthrange
+
+    # 1. Subject Distribution
+    rows = (
+        db.query(PracticeRecord.subject, func.count(PracticeRecord.id))
+        .filter(PracticeRecord.user_id == user.id)
+        .group_by(PracticeRecord.subject)
+        .all()
+    )
+    subject_stats = [
+        {"name": subj or "Unknown", "value": cnt} for subj, cnt in rows
+    ]
+
+    # 2. Monthly Activity (Last 6 months)
+    now = datetime.utcnow()
+    monthly: dict[str, dict] = {}
+    for i in range(5, -1, -1):
+        d = now - timedelta(days=30 * i)
+        key = d.strftime("%Y-%m")
+        monthly[key] = {"date": key, "total": 0, "correct": 0}
+
+    records = (
+        db.query(PracticeRecord)
+        .filter(PracticeRecord.user_id == user.id)
+        .all()
+    )
+    for rec in records:
+        if not rec.created_at:
+            continue
+        key = rec.created_at.strftime("%Y-%m")
+        if key in monthly:
+            monthly[key]["total"] += 1
+            if rec.is_correct:
+                monthly[key]["correct"] += 1
+            diff = rec.difficulty or "Unknown"
+            monthly[key][diff] = monthly[key].get(diff, 0) + 1
+
+    chart_data = sorted(monthly.values(), key=lambda x: x["date"])
+
+    # 3. Difficulty Distribution
+    diff_rows = (
+        db.query(PracticeRecord.difficulty, func.count(PracticeRecord.id))
+        .filter(PracticeRecord.user_id == user.id)
+        .group_by(PracticeRecord.difficulty)
+        .all()
+    )
+    difficulty_stats = [
+        {"name": d or "Unknown", "value": cnt} for d, cnt in diff_rows
+    ]
+
+    # 4. Overall Correctness
+    total = len(records)
+    correct = sum(1 for r in records if r.is_correct)
+    rate = round(correct / total * 100, 1) if total else 0.0
+
+    return {
+        "subjectStats": subject_stats,
+        "activityStats": chart_data,
+        "difficultyStats": difficulty_stats,
+        "overallStats": {"total": total, "correct": correct, "rate": rate},
+    }
+
+
+@router.delete("/practice/clear")
+def practice_stats_clear_nextjs_compat(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Next.js 前端调用的练习记录清除 — 委托给 practice.clear 逻辑."""
+    n = db.query(PracticeRecord).filter(PracticeRecord.user_id == user.id).delete()
+    db.commit()
+    return {"message": f"Practice history cleared successfully", "count": n}
