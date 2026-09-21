@@ -168,6 +168,13 @@ describe('/api/error-items', () => {
                 subjectId: 'subject-math-id',
             };
 
+            // 必须先 mock subject 存在，否则后端 subject 校验会返回 400
+            mocks.mockPrismaSubject.findUnique.mockResolvedValue({
+                id: 'subject-math-id',
+                name: '数学',
+                userId: 'user-123',
+            });
+
             const createdItem = {
                 id: 'error-item-2',
                 ...errorItemData,
@@ -187,6 +194,38 @@ describe('/api/error-items', () => {
 
             expect(response.status).toBe(201);
             expect(data.subjectId).toBe('subject-math-id');
+        });
+
+        it('应该接受 referenceImageUrl / wrongAnswerImageUrl 为 null（前端未上传附加图场景）', async () => {
+            const errorItemData = {
+                questionText: '求解 x = 2',
+                answerText: '2',
+                analysis: '直接给出',
+                knowledgePoints: ['代数'],
+                originalImageUrl: '',
+                referenceImageUrl: null,
+                wrongAnswerImageUrl: null,
+            };
+
+            const createdItem = {
+                id: 'error-item-null-images',
+                ...errorItemData,
+                userId: 'user-123',
+                masteryLevel: 0,
+            };
+            mocks.mockPrismaErrorItem.create.mockResolvedValue(createdItem);
+
+            const request = new Request('http://localhost/api/error-items', {
+                method: 'POST',
+                body: JSON.stringify(errorItemData),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            const response = await POST(request);
+            const data = await response.json();
+
+            expect(response.status).toBe(201);
+            expect(data.id).toBe('error-item-null-images');
         });
 
         it('应该成功创建错题并设置年级学期', async () => {

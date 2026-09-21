@@ -30,8 +30,8 @@ const createErrorItemSchema = z.object({
     paperLevel: z.string().max(50).optional(),
     geogebraCommands: z.string().max(20000).optional().nullable(),
     geogebraSuitable: z.boolean().optional(),
-    referenceImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional(),
-    wrongAnswerImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional(),
+    referenceImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional().nullable(),
+    wrongAnswerImageUrl: z.string().max(MAX_IMAGE_BASE64_CHARS).optional().nullable(),
 });
 
 export async function POST(req: Request) {
