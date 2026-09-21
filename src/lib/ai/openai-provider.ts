@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult, OnDelta } from "./types";
+import { DEFAULT_ANALYZE_TEXT_TEMPLATE } from './prompts';
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt } from './prompts';
 import { getAppConfig } from '../config';
 import { safeParseParsedQuestion } from './schema';
@@ -216,7 +217,7 @@ export class OpenAIProvider implements AIService {
                         ],
                     },
                 ],
-                max_tokens: 8192,
+                max_tokens: 2500,
             };
 
             logger.box('📤 API Request (发送给 AI 的原始请求)', JSON.stringify(requestParamsForLog, null, 2));
@@ -234,6 +235,7 @@ export class OpenAIProvider implements AIService {
                                 type: "image_url",
                                 image_url: {
                                     url: `data:${mimeType};base64,${imageBase64}`,
+                                    detail: "low",
                                 },
                             },
                         ],
@@ -250,7 +252,7 @@ export class OpenAIProvider implements AIService {
                     body: JSON.stringify({
                         model: this.model,
                         messages,
-                        max_tokens: 8192,
+                        max_tokens: 2500,
                         ...(onDelta ? { stream: true } : {}),
                     }),
                 });
@@ -279,12 +281,13 @@ export class OpenAIProvider implements AIService {
                                     type: "image_url",
                                     image_url: {
                                         url: `data:${mimeType};base64,${imageBase64}`,
+                                    detail: "low",
                                     },
                                 },
                             ],
                         },
                     ],
-                    max_tokens: 8192,
+                    max_tokens: 2500,
                     stream: true,
                 } as any);
 
@@ -312,13 +315,14 @@ export class OpenAIProvider implements AIService {
                                     type: "image_url",
                                     image_url: {
                                         url: `data:${mimeType};base64,${imageBase64}`,
+                                    detail: "low",
                                     },
                                 },
                             ],
                         },
                     ],
                     // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
-                    max_tokens: 8192,
+                    max_tokens: 2500,
                 });
             }
 
@@ -351,6 +355,61 @@ export class OpenAIProvider implements AIService {
         }
     }
 
+    async analyzeText(ocrText: string, language: 'zh' | 'en' = 'zh', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestion> {
+        const config = getAppConfig();
+
+        const prefetchedMathTags = (subject === '数学' || !subject) ? await getMathTagsFromDB(grade || null) : [];
+        const prefetchedPhysicsTags = (subject === '物理' || !subject) ? await getTagsFromDB('physics') : [];
+        const prefetchedChemistryTags = (subject === '化学' || !subject) ? await getTagsFromDB('chemistry') : [];
+        const prefetchedBiologyTags = (subject === '生物' || !subject) ? await getTagsFromDB('biology') : [];
+        const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
+
+        const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
+            customTemplate: DEFAULT_ANALYZE_TEXT_TEMPLATE,
+            prefetchedMathTags, prefetchedPhysicsTags, prefetchedChemistryTags, prefetchedBiologyTags, prefetchedEnglishTags,
+        }, gradeSemester);
+
+        logger.info({ ocrLen: ocrText.length, subject, grade, streaming: !!onDelta }, 'Analyze Text (OCR) — 纯文本模式，省钱');
+
+        try {
+            const messages = [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: `以下是本地 OCR 识别的题目文本：\n\n${ocrText}` },
+            ];
+
+            let response: any;
+
+            if (onDelta) {
+                const stream = await this.openai.chat.completions.create({
+                    model: this.model,
+                    messages,
+                    max_tokens: 2500,
+                    stream: true,
+                } as any);
+                let full = '';
+                for await (const chunk of stream as unknown as AsyncIterable<any>) {
+                    const delta = chunk?.choices?.[0]?.delta?.content;
+                    if (typeof delta === 'string' && delta.length > 0) { full += delta; onDelta(delta); }
+                }
+                response = { choices: [{ message: { content: full } }] };
+            } else {
+                response = await this.openai.chat.completions.create({
+                    model: this.model,
+                    messages,
+                    max_tokens: 2500,
+                });
+            }
+
+            const text = response?.choices?.[0]?.message?.content || "";
+            if (!text) throw new Error("Empty response from AI");
+            return this.parseResponse(text);
+        } catch (error) {
+            logger.error({ error: error instanceof Error ? error.message : String(error) }, 'analyzeText error');
+            this.handleError(error);
+            throw error;
+        }
+    }
+
     async generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language: 'zh' | 'en' = 'zh', difficulty: DifficultyLevel = 'medium', gradeSemester?: string | null): Promise<ParsedQuestion> {
         const config = getAppConfig();
         const systemPrompt = generateSimilarQuestionPrompt(language, originalQuestion, knowledgePoints, difficulty, {
@@ -378,7 +437,7 @@ export class OpenAIProvider implements AIService {
                     { role: "user", content: userPrompt },
                 ],
                 // response_format: { type: "json_object" }, // Removing to improve compatibility with 3rd party providers
-                max_tokens: 8192,
+                max_tokens: 2048,
             });
 
             const text = response.choices[0]?.message?.content || "";
@@ -425,7 +484,7 @@ export class OpenAIProvider implements AIService {
                 logger.debug({ imageLength: imageUrl.length }, 'Image added to request');
                 userContent = [
                     { type: "text", text: "请结合图片和题目描述提供答案和解析。" },
-                    { type: "image_url", image_url: { url: imageUrl } }
+                    { type: "image_url", image_url: { url: imageUrl, detail: "low" } }
                 ];
             } else {
                 logger.debug({ imageBase64Type: typeof imageBase64, hasValue: !!imageBase64 }, 'No image data');
@@ -438,7 +497,7 @@ export class OpenAIProvider implements AIService {
                     { role: "system", content: prompt.substring(0, 200) + "..." },
                     { role: "user", content: typeof userContent === 'string' ? userContent : "[包含图片的多模态消息]" }
                 ],
-                max_tokens: 8192
+                max_tokens: 2500
             };
             logger.debug({ requestParams }, 'Request parameters');
 
@@ -448,7 +507,7 @@ export class OpenAIProvider implements AIService {
                     { role: "system", content: prompt },
                     { role: "user", content: userContent }
                 ],
-                max_tokens: 8192,
+                max_tokens: 2500,
             });
 
             logger.debug({ response: JSON.stringify(response) }, 'Full API response');
@@ -504,7 +563,7 @@ export class OpenAIProvider implements AIService {
                     { role: "system", content: prompt },
                     { role: "user", content: "请分析上述题目并生成 GeoGebra 演示命令。" }
                 ],
-                max_tokens: 4096,
+                max_tokens: 2048,
             });
 
             const text = response.choices[0]?.message?.content || '';

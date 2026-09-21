@@ -58,6 +58,9 @@ export class FailoverAIService implements AIService {    constructor(private rea
     analyzeImage(...args: Parameters<AIService['analyzeImage']>): ReturnType<AIService['analyzeImage']> {
         return this.attempt('analyzeImage', args);
     }
+    analyzeText(...args: Parameters<AIService['analyzeText']>): ReturnType<AIService['analyzeText']> {
+        return this.attempt('analyzeText', args);
+    }
 
     generateSimilarQuestion(...args: Parameters<AIService['generateSimilarQuestion']>): ReturnType<AIService['generateSimilarQuestion']> {
         return this.attempt('generateSimilarQuestion', args);

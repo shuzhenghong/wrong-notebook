@@ -112,106 +112,75 @@ export interface PromptOptions {
   prefetchedEnglishTags?: string[];
 }
 
-export const DEFAULT_ANALYZE_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
-你是一位世界顶尖的、经验丰富的、专业的跨学科考试分析专家（Interdisciplinary Exam Analysis Expert）。你的核心任务是极致准确地分析用户提供的考试题目图片，全面理解所有文本、图表和隐含约束，并提供一个完整、高度结构化且专业的解决方案。
+export const DEFAULT_ANALYZE_TEXT_TEMPLATE = `你是跨学科考试分析专家。请根据以下本地 OCR 识别出的题目文本（OCR 可能有轻微误差），输出结构化解析。
 
 {{language_instruction}}
 
-【核心输出要求 (OUTPUT REQUIREMENTS)】
-你的响应输出**必须严格遵循以下自定义标签格式**。**严禁**使用 JSON 或 Markdown 代码块。**严禁**对 LaTeX 公式中的反斜杠进行二次转义（如 "\\frac" 是错误的，必须是 "\frac"）。
+【输出格式约束】
+- **必须**使用以下 10 个 XML 标签，**不要额外输出**开场白/结束语/JSON/Markdown code block
+- LaTeX 公式直接写标准符号（如 $\frac{1}{2}$），**不要转义反斜杠**
 
-请严格按照以下结构输出内容：
+请按以下结构输出：
 
-<subject>
-在此处填写学科，必须是以下之一："数学", "物理", "化学", "生物", "英语", "语文", "历史", "地理", "政治", "其他"。
-</subject>
+<subject>数学|物理|化学|生物|英语|语文|历史|地理|政治|其他</subject>
 
-<knowledge_points>
-在此处填写知识点，使用逗号分隔，例如：知识点1, 知识点2, 知识点3
-</knowledge_points>
+<knowledge_points>知识点1, 知识点2, 知识点3（最多5个）</knowledge_points>
 
-<requires_image>
-判断这道题是否需要依赖图片才能正确解答。如果题目包含几何图形、函数图像、实验装置图、电路图等必须看图才能理解的内容，填写 true；如果只需要文字描述即可理解（如英语题、纯文字数学题），填写 false。
-</requires_image>
+<requires_image>true|false（题目是否依赖图片才能解答，含几何/函数/装置图/电路图则为 true）</requires_image>
 
-<geogebra_suitable>
-判断这道题是否适合用 GeoGebra 进行动态可视化演示。若题目涉及几何图形（三角形、四边形、圆、直线关系、角度、面积等）、函数图像（一次/二次/指数/对数/三角函数等）、坐标系中的图形或动点轨迹，填写 true；若为纯文字推理、化学/生物/英语/语文等无需图形演示的题目，填写 false。仅当题目核心内容能用点、线、图形或曲线直观呈现时才填 true。
-</geogebra_suitable>
+<geogebra_suitable>true|false（是否适合 GeoGebra 动态演示，涉及几何/函数/坐标系则为 true）</geogebra_suitable>
 
-<wrong_answer_text>
-如果图片中包含学生已经写出的错误解答、错误步骤、草稿或错误答案，请尽量按原样摘录；如果没有看到学生错误解答，请留空。
-</wrong_answer_text>
+<wrong_answer_text>OCR 文本中的学生错误解答/步骤/草稿，没有则留空</wrong_answer_text>
 
-<mistake_status>
-填写以下值之一：wrong_attempt（图片中有错误解答或错误步骤）、not_attempted（没有错误解答，像是完全不会做或未作答）、unknown（无法判断）。
-</mistake_status>
+<mistake_status>wrong_attempt|not_attempted|unknown（根据 OCR 中可见作答痕迹判断）</mistake_status>
 
-<mistake_analysis>
-如果图片中包含错误解答，请分析错误可能发生在哪一步、为什么错、导致了什么后果；如果没有错误解答，请留空。
-</mistake_analysis>
+<mistake_analysis>错误解答的步骤分析与错因，没有错误解答则留空</mistake_analysis>
 
-<question_text>
-在此处填写题目的完整文本。使用 Markdown 格式。所有数学公式使用 LaTeX 符号（行内 $...$，块级 $$...$$）。
+<question_text>题目完整文本。Markdown 格式，公式用 LaTeX（行内 $...$，块级 $...$）；含子问题请完整列出。如 OCR 文本有误请自行纠正。</question_text>
 
-【表格处理规则】
-如果图片中包含表格，必须完整转录表格内容，遵循以下原则：
+<answer_text>正确答案，Markdown + LaTeX 格式</answer_text>
 
-1. **标准表格**：使用 Markdown 表格语法
-   | 列标题1 | 列标题2 | 列标题3 |
-   |---------|---------|---------|
-   | 数据1   | 数据2   | 数据3   |
+<analysis>详细步骤解析，简体中文，公式用标准 LaTeX 不转义反斜杠</analysis>
 
-2. **复杂表格**（合并单元格/多级表头/不规则布局）：
-   - 优先尝试用 Markdown 表格近似表示
-   - 如果 Markdown 无法准确表达，在表格前用文字说明结构，然后用简化的 Markdown 表格 + 注释
-   - 示例：
-     > 注：第1行为主标题，横跨3列；第2-3行为数据行
-
-     | 项目 | 数值A | 数值B |
-     |------|-------|-------|
-     | 测试1 | 10 | 20 |
-     | 测试2 | 15 | 25 |
-
-3. **表格完整性要求**：
-   - 必须转录所有单元格内容（包括空单元格用 - 或空格表示）
-   - 保留表格标题、单位、注释
-   - 保留数据的对齐关系和分组信息
-   - 表格中的数学公式使用 LaTeX 语法
-
-4. **表格上下文**：
-   - 如果表格有标题或编号（如"表1"），保留在表格前
-   - 如果表格后有注释或说明，保留在表格后
-   - 保持表格在题目中的位置关系
-
-5. **特殊情况处理**：
-   - 图表混合：如果表格旁边有图形，用文字说明位置关系
-   - 手写表格：尽力识别手写内容，不确定的用 [?] 标注
-   - 模糊表格：如果表格不清晰，在表格前注明"（表格内容可能不完整）"
-</question_text>
-
-<answer_text>
-在此处填写正确答案。使用 Markdown 和 LaTeX 符号。如果答案包含表格，遵循上述【表格处理规则】。
-</answer_text>
-
-<analysis>
-在此处填写详细的步骤解析。
-* 必须使用简体中文。
-* **直接使用标准的 LaTeX 符号**（如 $\frac{1}{2}$），**不要**进行 JSON 转义（不要写成 \\frac）。
-* 如果解析过程需要表格（如列表对比、分步计算表），遵循上述【表格处理规则】。
-</analysis>
-
-【知识点标签列表（KNOWLEDGE POINT LIST）】
 {{knowledge_points_list}}
+- 标签精准匹配，每题最多 5 个
 
-【标签使用规则 (TAG RULES)】
-- 标签必须与题目实际考查的知识点精准匹配。
-- 每题最多 5 个标签。
+{{grade_instruction}}
+{{provider_hints}}`;
 
-【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 10 个 XML 标签，除此之外不要输出任何其他“开场白”或“结束语”。
-2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
-3. **内容完整**：如果包含子问题，请在 question_text 中完整列出。
-4. **禁止图片**：严禁包含任何图片链接或 markdown 图片语法。
+export const DEFAULT_ANALYZE_TEMPLATE = `你是跨学科考试分析专家。请准确分析题目图片（文本/图表），输出结构化解析。
+
+{{language_instruction}}
+
+【输出格式约束】
+- **必须**使用以下 10 个 XML 标签，**不要额外输出**开场白/结束语/JSON/Markdown code block
+- LaTeX 公式直接写标准符号（如 $\frac{1}{2}$），**不要转义反斜杠**
+- 表格用 Markdown 表格语法；复杂表格可加一行注释说明结构
+
+请按以下结构输出：
+
+<subject>数学|物理|化学|生物|英语|语文|历史|地理|政治|其他</subject>
+
+<knowledge_points>知识点1, 知识点2, 知识点3（最多5个）</knowledge_points>
+
+<requires_image>true|false（题目是否依赖图片才能解答，含几何/函数/装置图/电路图则为 true）</requires_image>
+
+<geogebra_suitable>true|false（是否适合 GeoGebra 动态演示，涉及几何/函数/坐标系则为 true）</geogebra_suitable>
+
+<wrong_answer_text>图片中学生已写出的错误解答/步骤/草稿，没有则留空</wrong_answer_text>
+
+<mistake_status>wrong_attempt|not_attempted|unknown（根据图片中学生作答痕迹判断）</mistake_status>
+
+<mistake_analysis>错误解答的步骤分析与错因，没有错误解答则留空</mistake_analysis>
+
+<question_text>题目完整文本。Markdown 格式，公式用 LaTeX（行内 $...$，块级 $$...$$）；含子问题请完整列出；表格完整转录。</question_text>
+
+<answer_text>正确答案，Markdown + LaTeX 格式</answer_text>
+
+<analysis>详细步骤解析，简体中文，公式用标准 LaTeX 不转义反斜杠</analysis>
+
+{{knowledge_points_list}}
+- 标签精准匹配，每题最多 5 个
 
 {{grade_instruction}}
 {{provider_hints}}`;
@@ -387,23 +356,9 @@ ${englishTagsString}
 - 必须从上述列表中选择精确匹配的标签
 - 每题最多 5 个标签`;
   } else {
-    // 未知科目：显示所有标签让 AI 判断
-    tagsSection = `**数学标签 (Math Tags):**
-${mathTagsString}
-
-**物理标签 (Physics Tags):**
-${physicsTagsString}
-
-**化学标签 (Chemistry Tags):**
-${chemistryTagsString}
-
-**生物标签 (Biology Tags):**
-${biologyTagsString}
-
-**英语标签 (English Tags):**
-${englishTagsString}`;
+    // 未知科目：先用通用标签，节省 token；AI 也可以自由标注
+    tagsSection = `使用上述任一学科的标签即可，或根据题目自由选择精准标签，每题最多 5 个`;
   }
-
   const template = options?.customTemplate || DEFAULT_ANALYZE_TEMPLATE;
 
   return replaceVariables(template, {
@@ -458,61 +413,31 @@ export function generateSimilarQuestionPrompt(
  * 重新解题提示词模板
  * 用于根据校正后的题目文本重新生成答案和解析
  */
-export const DEFAULT_REANSWER_TEMPLATE = `【角色与核心任务 (ROLE AND CORE TASK)】
-你是一位经验丰富的专业教师。用户已经提供了一道**校正后的题目文本**，请你为这道题目提供正确的答案和详细的解析。
+export const DEFAULT_REANSWER_TEMPLATE = `你是专业教师。以下是校正后的题目，请给出答案与解析。
 
 {{language_instruction}}
 
-【题目内容 (QUESTION)】
+【题目】
 {{question_text}}
-
-【学科提示 (SUBJECT HINT)】
 {{subject_hint}}
 
-【核心输出要求 (OUTPUT REQUIREMENTS)】
-你的响应输出**必须严格遵循以下自定义标签格式**。**严禁**使用 JSON 或 Markdown 代码块。
+【输出格式】**仅**输出以下 6 个 XML 标签，不要其他内容：
 
-请严格按照以下结构输出内容（不要包含任何其他文字）：
+<answer_text>正确答案，Markdown + LaTeX</answer_text>
 
-<answer_text>
-在此处填写正确答案。使用 Markdown 和 LaTeX 符号。
-</answer_text>
+<analysis>详细步骤解析，简体中文，LaTeX 不转义反斜杠</analysis>
 
-<analysis>
-在此处填写详细的步骤解析。
-* 必须使用简体中文。
-* **直接使用标准的 LaTeX 符号**（如 $\\frac{1}{2}$），**不要**进行 JSON 转义。
-* 解析要清晰、完整，适合学生理解。
-</analysis>
+<knowledge_points>知识点1, 知识点2, 知识点3（最多5个）</knowledge_points>
 
-<knowledge_points>
-在此处填写知识点，使用逗号分隔，例如：知识点1, 知识点2, 知识点3
-</knowledge_points>
+<wrong_answer_text>根据当前图片中可见的学生作答痕迹判断错误解答，看不到则留空，不要猜测</wrong_answer_text>
 
-<wrong_answer_text>
-请只根据校正后的题目文本和当前图片中可见的学生作答痕迹重新判断学生错误解答。如果当前图片中可见错误解答、错误步骤、草稿或错误答案，请尽量按原样摘录；如果看不到学生作答痕迹，请留空，不要猜测。
-</wrong_answer_text>
+<mistake_status>wrong_attempt|not_attempted|unknown（依据图片中实际可见作答痕迹，不要猜测）</mistake_status>
 
-<mistake_status>
-重新判断并填写以下值之一：wrong_attempt（当前题目文本或当前图片中明确有错误解答或错误步骤）、not_attempted（当前图片明确显示未作答或空白）、unknown（看不到学生作答痕迹或无法判断）。不要猜测。
-</mistake_status>
-
-<mistake_analysis>
-请基于校正后的题目和当前图片中可见的学生作答痕迹重新判断错因。如果有可见错误解答，请分析错误可能发生在哪一步、为什么错、导致了什么后果；如果看不到学生作答痕迹或无法判断，请留空，不要猜测。
-</mistake_analysis>
-
-【!!! 关键格式与内容约束 (CRITICAL RULES) !!!】
-1. **格式严格**：必须严格包含上述 6 个 XML 标签，不要输出其他内容。
-2. **纯文本**：内容作为纯文本处理，**不要转义反斜杠**。
-3. **题目不变**：不要修改或重复题目内容，只提供答案和解析。
+<mistake_analysis>基于校正后题目和可见作答痕迹分析错因，看不到则留空</mistake_analysis>
 
 {{grade_instruction}}
 {{provider_hints}}`;
 
-/**
- * GeoGebra 动态演示生成提示词
- * 用于判断题目是否可以用 GeoGebra 演示，以及生成对应的 GeoGebra 命令
- */
 export const DEFAULT_GEOGEBRA_PROMPT = `【角色与核心任务 (ROLE AND CORE TASK)】
 你是一位专业的 GeoGebra 数学可视化专家。你的任务是分析一道数学题目，判断它是否适合用 GeoGebra 进行动态可视化演示。如果适合，生成可以直接在 GeoGebra 中执行的命令。
 

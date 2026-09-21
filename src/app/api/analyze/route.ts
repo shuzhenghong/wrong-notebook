@@ -36,7 +36,7 @@ export async function POST(req: Request) {
 
     try {
         const body = await req.json();
-        let { imageBase64, mimeType, language, subjectId } = body;
+        let { imageBase64, mimeType, language, subjectId, ocrText } = body;
 
         logger.debug({
             imageLength: imageBase64?.length,
@@ -45,12 +45,18 @@ export async function POST(req: Request) {
             subjectId
         }, 'Request received');
 
-        if (!imageBase64) {
-            logger.warn('Missing image data');
+        const hasOcrText = typeof ocrText === 'string' && ocrText.trim().length > 0;
+
+        if (hasOcrText) {
+            logger.info({ ocrLen: ocrText.length }, 'OCR text provided — 走纯文本模式，省多模态成本');
+        }
+
+        if (!imageBase64 && !hasOcrText) {
+            logger.warn('Missing image data and ocrText');
             return badRequest("Missing image data");
         }
 
-        if (typeof imageBase64 !== 'string' || imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
+        if (imageBase64 && (typeof imageBase64 !== 'string' || imageBase64.length > MAX_IMAGE_BASE64_CHARS)) {
             logger.warn({ size: typeof imageBase64 === 'string' ? imageBase64.length : 'n/a' }, 'Image payload too large');
             return badRequest(`Image too large (max ${MAX_IMAGE_BYTES / 1024 / 1024}MB)`);
         }
@@ -135,10 +141,10 @@ export async function POST(req: Request) {
                     };
                     try {
                         send('status', { stage: 'calling_ai' });
-                        const result = await aiService.analyzeImage(
-                            imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester,
-                            (delta) => send('delta', { text: delta })
-                        );
+                        const callFn = hasOcrText
+                            ? aiService.analyzeText.bind(aiService, ocrText, language, userGrade, subjectChinese, userGradeSemester)
+                            : aiService.analyzeImage.bind(aiService, imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
+                        const result = await callFn((delta) => send('delta', { text: delta }));
                         if (!result?.knowledgePoints?.length) {
                             logger.warn('Knowledge points is empty or null');
                         }
@@ -162,7 +168,9 @@ export async function POST(req: Request) {
             });
         }
 
-        const analysisResult = await aiService.analyzeImage(imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
+        const analysisResult = hasOcrText
+            ? await aiService.analyzeText(ocrText, language, userGrade, subjectChinese, userGradeSemester)
+            : await aiService.analyzeImage(imageBase64, mimeType, language, userGrade, subjectChinese, userGradeSemester);
 
         logger.debug({
             knowledgePointsCount: analysisResult.knowledgePoints?.length,

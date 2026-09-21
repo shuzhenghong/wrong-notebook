@@ -196,11 +196,19 @@ function HomeContent() {
             frontendLogger.info('[HomeAnalyze]', 'Step 2/5: Calling API endpoint /api/analyze');
             setAnalysisStep('analyzing');
             const apiStartTime = Date.now();
-            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
+            // 有本地 OCR 结果时带上 ocrText，后端优先走纯文本模式（省多模态成本）
+            const requestBody: any = {
                 imageBase64: base64Image,
                 language: language,
-                subjectId: resolvedNotebookId || undefined
-            }, { timeout: aiTimeout }); // Use configured timeout
+                subjectId: resolvedNotebookId || undefined,
+            };
+            if (ocrText && ocrText.trim().length > 0) {
+                requestBody.ocrText = ocrText.trim();
+                frontendLogger.info('[HomeAnalyze]', 'Sending with OCR text → 后端走纯文本模式（省 token）', {
+                    ocrLen: ocrText.trim().length,
+                });
+            }
+            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", requestBody, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[HomeAnalyze]', 'API response received, validating data', {
                 apiDuration

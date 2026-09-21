@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { AIService, ParsedQuestion, DifficultyLevel, AIConfig, ReanswerQuestionResult, GeogebraAnalysisResult } from "./types";
+import { DEFAULT_ANALYZE_TEXT_TEMPLATE } from './prompts';
 import { generateAnalyzePrompt, generateSimilarQuestionPrompt, generateGeogebraPrompt } from './prompts';
 import { safeParseParsedQuestion } from './schema';
 import { getAppConfig } from '../config';
@@ -212,6 +213,7 @@ export class GeminiProvider implements AIService {
 
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
+                generationConfig: { maxOutputTokens: 2500 },
                 contents: [
                     {
                         text: prompt
@@ -250,6 +252,39 @@ export class GeminiProvider implements AIService {
         }
     }
 
+    async analyzeText(ocrText: string, language: 'zh' | 'en' = 'zh', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestion> {
+        const config = getAppConfig();
+        const prefetchedMathTags = (subject === '数学' || !subject) ? await getMathTagsFromDB(grade || null) : [];
+        const prefetchedPhysicsTags = (subject === '物理' || !subject) ? await getTagsFromDB('physics') : [];
+        const prefetchedChemistryTags = (subject === '化学' || !subject) ? await getTagsFromDB('chemistry') : [];
+        const prefetchedBiologyTags = (subject === '生物' || !subject) ? await getTagsFromDB('biology') : [];
+        const prefetchedEnglishTags = (subject === '英语' || !subject) ? await getTagsFromDB('english') : [];
+
+        const systemPrompt = generateAnalyzePrompt(language, grade, subject, {
+            customTemplate: DEFAULT_ANALYZE_TEXT_TEMPLATE,
+            prefetchedMathTags, prefetchedPhysicsTags, prefetchedChemistryTags, prefetchedBiologyTags, prefetchedEnglishTags,
+        }, gradeSemester);
+
+        logger.info({ ocrLen: ocrText.length, subject, grade }, 'Gemini Analyze Text (OCR) — 纯文本模式，省钱');
+
+        const fullPrompt = systemPrompt + '\n\n【本地 OCR 识别结果】\n\n' + ocrText;
+
+        try {
+            const response = await this.retryOperation(() => this.ai.models.generateContent({
+                model: this.modelName,
+                generationConfig: { maxOutputTokens: 2500 },
+                contents: fullPrompt,
+            }));
+
+            const text = response.text || '';
+            if (!text) throw new Error("Empty response from AI");
+            return this.parseResponse(text);
+        } catch (error) {
+            logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Gemini analyzeText error');
+            throw error;
+        }
+    }
+
     async generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language: 'zh' | 'en' = 'zh', difficulty: DifficultyLevel = 'medium', gradeSemester?: string | null): Promise<ParsedQuestion> {
         const config = getAppConfig();
         const prompt = generateSimilarQuestionPrompt(language, originalQuestion, knowledgePoints, difficulty, {
@@ -269,6 +304,7 @@ export class GeminiProvider implements AIService {
         try {
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
+                generationConfig: { maxOutputTokens: 2048 },
                 contents: prompt
             }));
 
@@ -322,6 +358,7 @@ export class GeminiProvider implements AIService {
 
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
+                generationConfig: { maxOutputTokens: 2048 },
                 contents
             }));
 
@@ -366,6 +403,7 @@ export class GeminiProvider implements AIService {
         try {
             const response = await this.retryOperation(() => this.ai.models.generateContent({
                 model: this.modelName,
+                generationConfig: { maxOutputTokens: 2048 },
                 contents: prompt
             }));
 

@@ -28,6 +28,8 @@ export interface GeogebraAnalysisResult {
 
 export interface AIService {
     analyzeImage(imageBase64: string, mimeType?: string, language?: 'zh' | 'en', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestionFromSchema>;
+    /** 纯文本模式：前端已做本地 OCR，直接用 OCR 文本调 AI（省多模态成本） */
+    analyzeText(ocrText: string, language?: 'zh' | 'en', grade?: 7 | 8 | 9 | 10 | 11 | 12 | null, subject?: string | null, gradeSemester?: string | null, onDelta?: OnDelta): Promise<ParsedQuestionFromSchema>;
     generateSimilarQuestion(originalQuestion: string, knowledgePoints: string[], language?: 'zh' | 'en', difficulty?: DifficultyLevel, gradeSemester?: string | null): Promise<ParsedQuestionFromSchema>;
     reanswerQuestion(questionText: string, language?: 'zh' | 'en', subject?: string | null, imageBase64?: string, gradeSemester?: string | null): Promise<ReanswerQuestionResult>;
     analyzeForGeogebra(questionText: string, answerText: string, analysis: string, previousErrors?: string): Promise<GeogebraAnalysisResult>;
