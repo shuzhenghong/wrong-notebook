@@ -12,6 +12,7 @@ from .tags import router as tags_router
 from .practice import router as practice_router
 from .stats import router as stats_router
 from .admin import router as admin_router
+from .system import router as system_router
 
 
 api_router = APIRouter(prefix="/api")
@@ -24,9 +25,17 @@ api_router.include_router(tags_router, prefix="/tags", tags=["tags"])
 api_router.include_router(practice_router, prefix="/practice", tags=["practice"])
 api_router.include_router(stats_router, prefix="/stats", tags=["stats"])
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
+api_router.include_router(system_router)  # /version, /register/status
 
-
+# === Phase 3a 试点迁移: 这些端点已迁到 FastAPI, 删除 Next.js 本地 route.ts 即生效 ===
 @api_router.get("/health", tags=["health"])
-def health() -> dict[str, str]:
-    """健康检查."""
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    """健康检查 — 已迁到 Python FastAPI."""
+    # 返回 Next.js 原版前端可能需要的字段 (status + timestamp)
+    from datetime import datetime, timezone
+    return {
+        "status": "ok",
+        "db": "ok",
+        "backend": "fastapi",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
