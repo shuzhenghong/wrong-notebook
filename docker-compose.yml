@@ -4,6 +4,9 @@ services:
   # 仅容器内网可达，由前端代理转发，不暴露到宿主机
   # ─────────────────────────────────────────────────────────────
   backend:
+    # 默认使用 GitHub Actions 构建并推送的镜像（build-docker.yml，双架构 amd64/arm64）
+    # 想本地构建：docker compose build backend（compose 会忽略 image 标签用 build 上下文重建）
+    image: ghcr.io/shuzhenghong/wrong-notebook-backend:latest
     build:
       context: ./python-backend
     container_name: wrong-notebook-backend
@@ -43,7 +46,9 @@ services:
   # /api/* 由 catch-all 转发到 backend:8000
   # ─────────────────────────────────────────────────────────────
   frontend:
-    # 想用 CI 预构建镜像可改成：image: ghcr.io/shuzhenghong/wrong-notebook:latest
+    # 默认使用 GitHub Actions 构建并推送的镜像（build-docker.yml，双架构 amd64/arm64）
+    # 想本地构建：docker compose build frontend
+    image: ghcr.io/shuzhenghong/wrong-notebook:latest
     build:
       context: .
     container_name: wrong-notebook
