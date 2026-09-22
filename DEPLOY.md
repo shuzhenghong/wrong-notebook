@@ -35,11 +35,34 @@ cp .env.example .env
 
 ### 2. 启动
 
+**方式 A：本地构建**（代码有改动时用）
+
 ```bash
 docker compose up -d --build
 ```
 
 首次构建较慢（前端需 `npm ci` + `next build`，后端需装 Python 依赖）。
+
+**方式 B：直接用 GitHub 构建好的镜像**（推荐，秒级启动）
+
+镜像由 GitHub Actions 自动构建，推送图书写 Git commit sha tag：
+
+| 镜像 | 地址 |
+|---|---|
+| 前端 | `ghcr.io/shuzhenghong/wrong-notebook:latest` |
+| 后端 | `ghcr.io/shuzhenghong/wrong-notebook-backend:latest` |
+
+```bash
+# 首次拉取私有镜像需登录（用 GitHub 账号 + Personal Access Token，需 read:packages 权限）
+echo $GH_TOKEN | docker login ghcr.io -u <你的GitHub用户名> --password-stdin
+
+# 编辑 docker-compose.yml，把 frontend 服务的 build 段换成 image：
+#   image: ghcr.io/shuzhenghong/wrong-notebook:latest
+docker compose pull && docker compose up -d
+```
+
+> 若镜像为私有导致拉取失败，可在 GitHub 仓库 → Packages → 对应包 → Package settings 中改为 Public；
+> 或保持上面的 `docker login` 登录态即可拉取。
 
 ### 3. 访问与初始登录
 
