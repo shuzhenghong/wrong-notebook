@@ -1,0 +1,27 @@
+# 避免把本地虚拟环境、数据库、密钥打进镜像
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 本地运行产物（会由 compose 挂卷提供）
+*.db
+*.db-shm
+*.db-wal
+uploads/
+app-config.json
+
+# 密钥：应通过环境变量注入，绝不进镜像层
+.env
+.env.*
+!.env.example
+
+# 文档与测试
+tests/
+*.md
+.git/
+.github/

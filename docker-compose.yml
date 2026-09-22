@@ -1,40 +1,86 @@
-version: '3'
-
 services:
-  wrong-notebook:
-    image: ghcr.io/shuzhenghong/wrong-notebook:latest
+  # ─────────────────────────────────────────────────────────────
+  # Python 后端（FastAPI）—— 业务与 AI 能力都在这里
+  # 仅容器内网可达，由前端代理转发，不暴露到宿主机
+  # ─────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./python-backend
+    container_name: wrong-notebook-backend
+    restart: unless-stopped
+    expose:
+      - "8000"          # 只对同网络的前端可见；不要改成 ports 暴露到公网
+    environment:
+      # 生产模式：debug=false 会强制校验 JWT_SECRET_KEY 不是默认值
+      - DEBUG=false
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?请在 .env 中设置 JWT_SECRET_KEY（openssl rand -base64 48）}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-10080}
+      - DATABASE_URL=sqlite:////app/data/wrong_notebook.db
+      - UPLOAD_DIR=/app/data/uploads
+      - APP_CONFIG_FILE=/app/data/app-config.json
+      # 信任前端注入的 X-Forwarded-User（内网桥接）。
+      # 安全前提：本服务未暴露到公网。若你把 8000 映射出去，此项必须设为 false 并改用 JWT。
+      - TRUST_X_FORWARDED_USER=true
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      # AI（可选，留空则关闭 AI 讲解功能）
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_MODEL=${GOOGLE_MODEL:-gemini-1.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    volumes:
+      - ./data/backend:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).read()"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────
+  # Next.js 前端 —— 用户唯一访问的入口（:3000）
+  # /api/* 由 catch-all 转发到 backend:8000
+  # ─────────────────────────────────────────────────────────────
+  frontend:
+    # 想用 CI 预构建镜像可改成：image: ghcr.io/shuzhenghong/wrong-notebook:latest
+    build:
+      context: .
     container_name: wrong-notebook
-    restart: always
+    restart: unless-stopped
     ports:
       - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
     environment:
-      # NEXTAUTH_URL 根据实际情况设置你的信息
-      #- NEXTAUTH_URL=http://your_domain_name:3000
-      # 会话加密密钥：可留空 —— 首次启动会自动生成强随机密钥并保存到 ./data/.nextauth_secret
-      # 如需多实例共享登录态，请显式设置为固定值：openssl rand -base64 32
+      # ── 关键：打通前端 → Python 后端 ──
+      - PYTHON_BACKEND_URL=http://backend:8000
+      - PYTHON_PROXY_ENABLED=true
+      # ── 前端自身（NextAuth / 管理员初始化）──
+      # 可留空 —— 首次启动自动生成强随机密钥并保存到 ./data/.nextauth_secret
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
-      # 初始管理员密码：可留空 —— 留空时首次启动自动生成强随机密码并在启动日志中打印
-      # 若想自己指定，取消注释下面的行并填写（登录后仍会被强制要求修改）
-      #- DEFAULT_ADMIN_PASSWORD=your_strong_password
-      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-}
-      # 初始管理员登录邮箱（默认 admin@localhost）
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-}
+      - AUTH_TRUST_HOST=true
       - DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL:-admin@localhost}
-      # 自动生成的初始凭据落盘位置（可选，默认 /app/data/initial-admin-credentials.txt）
+      # 可留空 —— 留空时自动生成强随机密码并打印在启动日志 + ./data/initial-admin-credentials.txt
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-}
       - ADMIN_CREDENTIALS_FILE=${ADMIN_CREDENTIALS_FILE:-/app/data/initial-admin-credentials.txt}
-      # 本地 OCR：默认使用内置引擎（PP-OCRv4 中文模型，进程内推理，无需额外部署）。
-      # 如需切换独立 sidecar 服务（C++ 推理更快），用 `docker compose --profile ocr up -d`
-      # 启动 ocr 服务，并在 .env 中设置 OCR_BASE_URL=http://ocr:8787
+      # ── AI / OCR（前端直连的部分，可选）──
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OCR_BASE_URL=${OCR_BASE_URL:-}
       - OCR_API_KEY=${OCR_API_KEY:-}
       - OCR_TIMEOUT_MS=${OCR_TIMEOUT_MS:-}
     volumes:
-      # Persist the SQLite database
       - ./data:/app/data
       - ./config:/app/config
 
-  # 可选：独立本地 OCR 服务（lw.PPOCR.OpenCVDNN，PP-OCR Tiny，OpenCV DNN 纯 CPU，约 150MB 内存）
-  # 默认不启动；需要时：docker compose --profile ocr up -d 并设置 OCR_BASE_URL=http://ocr:8787
-  # 文档：https://github.com/lxw112190/lw.PPOCR.OpenCVDNN
+  # ─────────────────────────────────────────────────────────────
+  # 可选：独立本地 OCR 服务（PP-OCR Tiny，纯 CPU，约 150MB 内存）
+  # 默认不启动；需要时：docker compose --profile ocr up -d，并设置 OCR_BASE_URL=http://ocr:8787
+  # ─────────────────────────────────────────────────────────────
   ocr:
     image: ghcr.io/lxw112190/lw.ppocr.opencvdnn:1.1.0
     container_name: wrong-notebook-ocr
