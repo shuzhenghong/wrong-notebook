@@ -38,7 +38,6 @@ yarn-error.log*
 .vercel
 
 # typescript
-*.tsbuildinfoconfig
 *.tsbuildinfo
 next-env.d.ts
 
@@ -91,5 +90,6 @@ __pycache__/
 python-backend/.env
 python-backend/app.db
 python-backend/wrong_notebook.db
+python-backend/uploads/
 *.egg-info/
 .venv/

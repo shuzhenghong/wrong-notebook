@@ -161,33 +161,34 @@ async function proxy(
   const backendUrl = `${PYTHON_BACKEND_URL}/api/${pathSegments.join("/")}${req.nextUrl.search}`;
 
   // 构造转发 headers (过滤 Next.js 内部 headers)
+  // 安全关键: x-forwarded-user 必须在这里剥离 —— 它是前端→后端的身份桥接头，
+  // 绝不能透传客户端自带的值，否则任何人都能伪造 base64 JSON 冒充任意用户(含 admin)。
   const forwardHeaders: Record<string, string> = {};
   const skipHeaders = new Set([
     "host", "connection", "content-length", "x-forwarded-for",
     "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+    "x-forwarded-user",
   ]);
   req.headers.forEach((value, key) => {
     if (skipHeaders.has(key.toLowerCase())) return;
     forwardHeaders[key] = value;
   });
 
-  // NextAuth 用户 → X-Forwarded-User
-  // 关键: 如果原始请求已经带了 x-forwarded-user (测试/调试场景), 尊重它;
-  //       否则注入我们从 NextAuth session 解析出来的用户
-  const alreadyHasForwarded = forwardHeaders["x-forwarded-user"] !== undefined;
-  if (!alreadyHasForwarded) {
-    if (user) {
-      forwardHeaders["x-forwarded-user"] = Buffer.from(JSON.stringify(user)).toString("base64");
-    } else {
-      forwardHeaders["x-forwarded-user"] = "anonymous";
-    }
+  // NextAuth 用户 → X-Forwarded-User（服务端解析 session 后强制注入，
+  // 客户端携带的同名头已在上面剥离，无法伪造身份）
+  if (user) {
+    forwardHeaders["x-forwarded-user"] = Buffer.from(JSON.stringify(user)).toString("base64");
+  } else {
+    forwardHeaders["x-forwarded-user"] = "anonymous";
   }
 
-  // 读 body (GET/HEAD 无 body)
+  // 读 body (GET/HEAD 无 body)。
+  // 用 arrayBuffer 按原始字节透传 —— text() 会做 UTF-8 解码，
+  // 一旦未来出现 multipart/二进制上传会被 U+FFFD 替换字符静默损坏。
   let body: Buffer | null = null;
   if (method !== "GET" && method !== "HEAD") {
-    const text = await req.text();
-    body = text ? Buffer.from(text) : null;
+    const raw = await req.arrayBuffer();
+    body = raw.byteLength > 0 ? Buffer.from(raw) : null;
     if (body && !forwardHeaders["content-length"]) {
       forwardHeaders["content-length"] = String(body.length);
     }

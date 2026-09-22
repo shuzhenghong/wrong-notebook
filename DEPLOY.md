@@ -112,7 +112,8 @@ npm run dev
 
 1. **不要把后端 8000 端口暴露到公网。**
    后端开启了 `TRUST_X_FORWARDED_USER=true`（信任内网注入的身份头）。一旦公网可达，任何人都能伪造该头冒充任意用户。
-   若确实需要对外提供 API：把 `TRUST_X_FORWARDED_USER` 设为 `false`，客户端改用 `Authorization: Bearer <jwt>`。
+   前端 catch-all 代理会把客户端自带的 `X-Forwarded-User` 头**强制剥离**后重新注入服务端解析的身份，因此经前端访问时身份不可伪造；
+   但直连 8000 端口仍可任意伪造。若确实需要对外提供 API：把 `TRUST_X_FORWARDED_USER` 设为 `false`，客户端改用 `Authorization: Bearer <jwt>`。
 
 2. `DEBUG=false` 时后端会**拒绝使用默认 JWT 密钥**并拒绝启动——这是刻意的安全保护，请务必设置 `JWT_SECRET_KEY`。
 

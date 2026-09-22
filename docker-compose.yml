@@ -66,12 +66,8 @@ services:
       # 可留空 —— 留空时自动生成强随机密码并打印在启动日志 + ./data/initial-admin-credentials.txt
       - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-}
       - ADMIN_CREDENTIALS_FILE=${ADMIN_CREDENTIALS_FILE:-/app/data/initial-admin-credentials.txt}
-      # ── AI（可选）──
-      # 说明：AI 与本地 OCR 都已下沉到 backend 服务，这里保留仅为将来可能的
-      # 前端直连调试用途，正常部署无需设置。
-      - AI_PROVIDER=${AI_PROVIDER:-gemini}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # 说明：AI 与 OCR 均已下沉到 backend 服务，AI 配置见 backend 的环境变量，
+      # 前端不需要（也不读取）任何 AI 相关变量。
     volumes:
       - ./data:/app/data
       - ./config:/app/config
