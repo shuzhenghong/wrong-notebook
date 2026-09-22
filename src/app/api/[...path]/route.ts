@@ -195,7 +195,11 @@ async function proxy(
 
   try {
     const resp = await forwardViaNodeHttp(method, backendUrl, forwardHeaders, body);
-    return new Response(resp.body, {
+    // Buffer<ArrayBufferLike> 不被 BodyInit 接受，这里显式拷成 Uint8Array<ArrayBuffer>。
+    // 拷贝同时也切断了与上游 chunk 缓冲区的共享，响应构造更安全。
+    const bytes = new Uint8Array(resp.body.byteLength);
+    bytes.set(resp.body);
+    return new Response(bytes, {
       status: resp.status,
       headers: resp.headers,
     });
