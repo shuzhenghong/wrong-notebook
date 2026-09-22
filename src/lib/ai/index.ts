@@ -1,72 +1,15 @@
-import { AIService } from "./types";
-import { GeminiProvider } from "./gemini-provider";
-import { OpenAIProvider } from "./openai-provider";
-import { AzureOpenAIProvider } from "./azure-provider";
-import { FailoverAIService, AIProviderCandidate } from "./failover";
-
-export * from "./types";
-export { FailoverAIService, type AIProviderCandidate } from "./failover";
-
-import { getAppConfig, getActiveOpenAIConfig } from "../config";
-import { createLogger } from "../logger";
-
-const logger = createLogger('ai');
-
 /**
- * 构建有序 AI 渠道候选列表（主渠道在前）。
- * - openai：active 实例优先，其余已配置实例依次作为降级备选
- * - gemini / azure：单渠道，行为与之前一致
- * 无 apiKey 的实例会被跳过（OpenAIProvider 构造会抛 AI_AUTH_ERROR）。
+ * 前端 AI 模块的对外出口。
+ *
+ * AI 的实际调用已全部下沉到 Python 后端（/api/analyze、/api/ai/*），
+ * 前端不再持有 openai / @google/genai 客户端。这里只保留与后端共享的契约部分：
+ *   - types.ts    ParsedQuestion 等结构化题型定义（组件/页面渲染要用）
+ *   - prompts.ts  默认提示词模板常量（设置页展示与重置要用）
+ *   - schema.ts   ParsedQuestion 的 zod 校验（收到后端结果后做防御式解析）
+ *
+ * 原先的 provider（openai/gemini/azure）与 failover 实现已删除：
+ * 迁移后无人引用，且会把上百 MB 的 SDK 依赖带进前端镜像。
  */
-export function getAIServiceCandidates(): AIProviderCandidate[] {
-    // Always get fresh config
-    const config = getAppConfig();
-    const provider = config.aiProvider;
-    const candidates: AIProviderCandidate[] = [];
-
-    if (provider === "openai") {
-        const activeConfig = getActiveOpenAIConfig();
-        const instances = config.openai?.instances || [];
-        // active 实例排最前，其余实例保持配置顺序作为备选
-        const ordered = [
-            ...instances.filter((i) => i.id === activeConfig?.id),
-            ...instances.filter((i) => i.id !== activeConfig?.id),
-        ];
-        for (const instance of ordered) {
-            if (!instance.apiKey) continue;
-            candidates.push({
-                name: `openai:${instance.name || instance.id}`,
-                service: new OpenAIProvider(instance),
-                url: instance.baseUrl,
-            });
-        }
-        logger.info({ channels: candidates.map((c) => c.name) }, 'Using OpenAI Provider with failover chain');
-    } else if (provider === "azure") {
-        logger.info({ deployment: config.azure?.deploymentName }, 'Using Azure OpenAI Provider');
-        candidates.push({
-            name: 'azure',
-            service: new AzureOpenAIProvider(config.azure),
-            url: config.azure?.endpoint,
-        });
-    } else {
-        logger.info('Using Gemini Provider');
-        candidates.push({
-            name: 'gemini',
-            service: new GeminiProvider(config.gemini),
-            url: config.gemini?.baseUrl,
-        });
-    }
-
-    return candidates;
-}
-
-/** failover 包装后的 AI 服务（主渠道失败自动切下一个候选） */
-export function getAIService(): AIService {
-    return new FailoverAIService(getAIServiceCandidates());
-}
-
-/** 服务 + 候选列表一起返回，供调用方在发起请求前对全部候选渠道出口做 SSRF 校验 */
-export function getAIServiceWithCandidates(): { service: AIService; candidates: AIProviderCandidate[] } {
-    const candidates = getAIServiceCandidates();
-    return { service: new FailoverAIService(candidates), candidates };
-}
+export * from "./types";
+export * from "./prompts";
+export * from "./schema";

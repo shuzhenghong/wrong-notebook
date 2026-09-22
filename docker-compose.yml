@@ -66,25 +66,15 @@ services:
       # 可留空 —— 留空时自动生成强随机密码并打印在启动日志 + ./data/initial-admin-credentials.txt
       - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-}
       - ADMIN_CREDENTIALS_FILE=${ADMIN_CREDENTIALS_FILE:-/app/data/initial-admin-credentials.txt}
-      # ── AI / OCR（前端直连的部分，可选）──
+      # ── AI（可选）──
+      # 说明：AI 与本地 OCR 都已下沉到 backend 服务，这里保留仅为将来可能的
+      # 前端直连调试用途，正常部署无需设置。
       - AI_PROVIDER=${AI_PROVIDER:-gemini}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OCR_BASE_URL=${OCR_BASE_URL:-}
-      - OCR_API_KEY=${OCR_API_KEY:-}
-      - OCR_TIMEOUT_MS=${OCR_TIMEOUT_MS:-}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
 
-  # ─────────────────────────────────────────────────────────────
-  # 可选：独立本地 OCR 服务（PP-OCR Tiny，纯 CPU，约 150MB 内存）
-  # 默认不启动；需要时：docker compose --profile ocr up -d，并设置 OCR_BASE_URL=http://ocr:8787
-  # ─────────────────────────────────────────────────────────────
-  ocr:
-    image: ghcr.io/lxw112190/lw.ppocr.opencvdnn:1.1.0
-    container_name: wrong-notebook-ocr
-    restart: unless-stopped
-    profiles: ["ocr"]
-    volumes:
-      - ./data/ocr-logs:/data/logs
+#（已移除原有的 lw.PPOCR.OpenCVDNN sidecar：本地 OCR 现在由 backend 内置的
+#  rapidocr + onnxruntime 承担，不需要额外容器。参见 python-backend/requirements-ocr.txt）

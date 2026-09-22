@@ -39,6 +39,25 @@ interface ProxyUser {
   role: string;
 }
 
+/** 转发的响应体必须保留**原始字节**。
+ *
+ * 之前这里做的是 Buffer -> utf-8 String -> Response，对 JSON 没问题，
+ * 但图片二进制经过 UTF-8 解码会产生 U+FFFD 替换字符，图片直接损坏。
+ * 因此统一以 Buffer 传递，`new Response(Uint8Array)` 支持二进制负载。
+ */
+interface UpstreamResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: Buffer;
+}
+
+/** 逐出不应透传的 hop-by-hop / 长度类 header，由运行时按实际 body 重新计算。 */
+const STRIP_RESPONSE_HEADERS = new Set([
+  "content-length",
+  "transfer-encoding",
+  "connection",
+]);
+
 async function resolveUser(req: NextRequest): Promise<ProxyUser | null> {
   try {
     const token = await getToken({
@@ -63,7 +82,7 @@ function forwardViaNodeHttp(
   backendUrl: string,
   headers: Record<string, string>,
   body: Buffer | null,
-): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+): Promise<UpstreamResponse> {
   return new Promise((resolve, reject) => {
     const url = new URL(backendUrl);
     const lib = url.protocol === "https:" ? https : http;
@@ -92,6 +111,7 @@ function forwardViaNodeHttp(
           const normalized: Record<string, string> = {};
           for (const [k, v] of Object.entries(res.headers)) {
             if (k.toLowerCase() === "set-cookie") continue; // 不转发 cookie
+            if (STRIP_RESPONSE_HEADERS.has(k.toLowerCase())) continue; // 长度类交给运行时重算
             if (Array.isArray(v)) {
               normalized[k] = v.join(", ");
             } else if (v) {
@@ -101,7 +121,8 @@ function forwardViaNodeHttp(
           resolve({
             status: res.statusCode || 500,
             headers: normalized,
-            body: Buffer.concat(chunks).toString("utf-8"),
+            // 保留原始字节：图片等二进制响应不能被 UTF-8 解码
+            body: Buffer.concat(chunks),
           });
         });
       },

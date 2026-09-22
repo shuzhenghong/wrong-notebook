@@ -63,33 +63,14 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
-  integration-test:
-    runs-on: ubuntu-latest
-    name: Integration Tests
-    needs: unit-test
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund # npm ci pending lockfile update (see PR note)
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
-
-      - name: Run integration tests
-        run: npm run test:integration
-
+  # 注：集成测试随渐进迁移一并移出前端。原先的 integration 用例全部 import
+  # Next.js 的 route handler，而这些业务路由已经下沉到 Python 后端，用例无法再
+  # 在本仓库运行；对应覆盖应由 python-backend 的 pytest 承担。
+  # 这里保留 job 位是为了将来恢复集成测试时不必重写流水线。
   build-check:
     runs-on: ubuntu-latest
     name: Build Check
-    needs: integration-test
+    needs: unit-test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

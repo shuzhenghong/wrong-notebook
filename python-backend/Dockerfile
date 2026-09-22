@@ -12,11 +12,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# 可选：本地 OCR 引擎（rapidocr-onnxruntime + onnxruntime，约 +250MB）
+# 默认开启，保证 docker compose 起开箱即用；确要精简镜像时用 --build-arg WITH_OCR=false
+ARG WITH_OCR=true
+
 WORKDIR /app
 
 # 依赖单独成层：requirements.txt 不变时可复用缓存，重建极快
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-ocr.txt ./
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ "$WITH_OCR" = "true" ]; then \
+           pip install --no-cache-dir -r requirements-ocr.txt; \
+       else \
+           echo "[dockerfile] WITH_OCR=false, skip local OCR engine"; \
+       fi
 
 COPY app ./app
 COPY seeds ./seeds

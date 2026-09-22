@@ -10,6 +10,21 @@ export class ApiError extends Error {
     }
 }
 
+/**
+ * Python 后端返回的是 FastAPI 形态的错误体 { detail: "..." }，
+ * 而前端各处统一按 error.data.message 取后端错误码/文案。
+ * 这里归一化一次，避免迁移后所有报错都退化成通用文案。
+ */
+function normalizeErrorData(raw: unknown): unknown {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const obj = raw as Record<string, unknown>;
+        if (obj.message === undefined && typeof obj.detail === 'string') {
+            return { ...obj, message: obj.detail };
+        }
+    }
+    return raw;
+}
+
 async function request<T>(url: string, options: RequestOptions = {}): Promise<T> {
     const { params, headers, timeout = 60000, ...rest } = options;
 
@@ -45,7 +60,7 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
             } catch {
                 errorData = await res.text();
             }
-            throw new ApiError(res.status, res.statusText, errorData);
+            throw new ApiError(res.status, res.statusText, normalizeErrorData(errorData));
         }
 
         // Handle empty responses (e.g. 204 No Content)
@@ -103,7 +118,7 @@ async function postStream<TResponse>(url: string, body: unknown, callbacks: Stre
             } catch {
                 errorData = await res.text();
             }
-            throw new ApiError(res.status, res.statusText, errorData);
+            throw new ApiError(res.status, res.statusText, normalizeErrorData(errorData));
         }
 
         const reader = res.body.getReader();

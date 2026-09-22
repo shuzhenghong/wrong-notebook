@@ -1,0 +1,23 @@
+# 可选依赖：本地 OCR（PP-OCRv4 中文识别引擎）
+#
+# 不放在主 requirements.txt，因为 onnxruntime + 模型体积较大（约 200MB+），
+# 纯 API / 不打算用本地 OCR 的部署无需承担这部分体积。
+#
+# 为什么用 rapidocr 而不是 rapidocr-onnxruntime：
+#   rapidocr-onnxruntime 已停止更新，Requires-Python <3.13（Python 3.13 装不上）；
+#   rapidocr 3.x 是官方后继版本，API 兼容（RapidOCR() 同名），且支持 3.8~3.13。
+#
+# 安装方式：
+#   Docker（默认已装）:  docker build --build-arg WITH_OCR=true ...
+#   裸机 / 轻量部署:     pip install -r requirements-ocr.txt
+#
+# 不装时后端行为：POST /api/ocr 返回 503 OCR_NOT_INSTALLED，其余功能不受影响。
+# 注意：rapidocr>=3.x 把推理后端做成可插拔，必须显式装 onnxruntime，
+# 否则能 import 成功但构造 RapidOCR() 时抛 "onnxruntime is not installed"。
+#
+# 版本上限是实测踩出来的，别随便放宽：
+#   onnxruntime 1.30.x 在 Windows 上推理进程直接段错误（exit 139）
+#   onnxruntime 1.29.x 在 Windows 10/Server 1809（build 17763）上
+#     DLL 初始化失败：ImportError: DLL load failed while importing onnxruntime_pybind11_state
+#   1.20.x 在上述两类环境都实测可用，与前端 onnxruntime-node 的固定版本保持一致。
+onnxruntime>=1.20.0,<1.21.0

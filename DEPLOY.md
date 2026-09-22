@@ -12,7 +12,7 @@
                           SQLite /app/data/wrong_notebook.db
 ```
 
-- **前端（Next.js）**：负责 UI、登录会话（NextAuth）、图片/OCR 等少数本地路由；其余 `/api/*` 全部转发给后端。
+- **前端（Next.js）**：负责 UI 与登录会话（NextAuth）；所有 `/api/*` 一律转发给后端（前端已无本地业务路由，只剩 `[...path]` 代理与 `auth/[...nextauth]`）。
 - **后端（FastAPI）**：错题、笔记本、标签、练习、统计、AI 讲解等业务逻辑与数据，独占数据库。
 - 身份桥接：前端解析 NextAuth session → 注入 `X-Forwarded-User` → 后端按 email 自动镜像用户（lazy mirror）。
 
@@ -141,11 +141,14 @@ npm run dev
 | 后端 `unhealthy` | 健康检查走 `/health`（会连一次数据库）；看日志排查 DB 路径权限 |
 | 想临时直连后端调试 | `docker compose exec backend python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/health').read())"`；或临时把 `expose` 改成 `ports: - "8000:8000"`（记得同时关闭 `TRUST_X_FORWARDED_USER`） |
 
-## 六、可选：独立 OCR 服务
+## 六、本地 OCR 由后端承担
 
-默认前端使用内置 OCR 引擎，无需额外部署。如需独立 sidecar：
+OCR 跑在 `backend` 内（rapidocr + onnxruntime，PP-OCR 中文模型），前端不再内置引擎，
+也不需要 sidecar 容器——compose 里原本的 `ocr` profile 已移除。
 
-```bash
-docker compose --profile ocr up -d
-# 并在 .env 中设置 OCR_BASE_URL=http://ocr:8787
-```
+- 依赖在 `python-backend/requirements-ocr.txt`，后端镜像**默认安装**
+  （Dockerfile 里的 `ARG WITH_OCR=true`）。
+- 想做精简镜像：`docker compose build --build-arg WITH_OCR=false backend`。
+  关闭后 `POST /api/ocr` 返回 `503 OCR_NOT_INSTALLED`，其余功能不受影响。
+- 首次调用会加载模型（约 1~3 秒），之后常驻复用；结果按 sha256 缓存 5 分钟。
+- 引擎懒加载 + 缓存都在后端进程内，多副本部署时各副本各自持有，属正常现象。
