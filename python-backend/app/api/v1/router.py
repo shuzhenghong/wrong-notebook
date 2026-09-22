@@ -16,6 +16,10 @@ from .system import router as system_router
 from .analytics import router as analytics_router
 from .ai_extras import router as ai_extras_router
 from .import_export import router as import_export_router
+from .images import router as images_router
+from .ocr import router as ocr_router
+from .frontend_logs import router as frontend_logs_router
+from .openclaw import router as openclaw_router
 
 
 api_router = APIRouter(prefix="/api")
@@ -29,15 +33,20 @@ api_router.include_router(practice_router, prefix="/practice", tags=["practice"]
 api_router.include_router(stats_router, prefix="/stats", tags=["stats"])
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 api_router.include_router(analytics_router, tags=["analytics"])  # /analytics
-api_router.include_router(ai_extras_router, tags=["ai-extras"])  # /reanswer, /geogebra-analyze, /ai/models, /ai/test
-api_router.include_router(import_export_router, tags=["import-export"])  # /import, /admin/migrate-tags
+api_router.include_router(ai_extras_router, tags=["ai-extras"])
+api_router.include_router(import_export_router, tags=["import-export"])
 api_router.include_router(system_router)  # /version, /register/status
 
-# === Phase 3a 试点迁移: 这些端点已迁到 FastAPI, 删除 Next.js 本地 route.ts 即生效 ===
+# === 新迁移的 4 个路由 ===
+api_router.include_router(images_router, prefix="/images", tags=["images"])
+api_router.include_router(ocr_router, prefix="/ocr", tags=["ocr"])
+api_router.include_router(frontend_logs_router, prefix="/logs/frontend", tags=["frontend-logs"])
+api_router.include_router(openclaw_router, prefix="/openclaw/batch-upload", tags=["openclaw"])
+
+
 @api_router.get("/health", tags=["health"])
 def health() -> dict[str, object]:
     """健康检查 — 已迁到 Python FastAPI."""
-    # 返回 Next.js 原版前端可能需要的字段 (status + timestamp)
     from datetime import datetime, timezone
     return {
         "status": "ok",

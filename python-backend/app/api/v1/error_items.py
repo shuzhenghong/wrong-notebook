@@ -19,6 +19,7 @@ from ...schemas.error_item import (
     ErrorItemUpdate,
 )
 from ...utils.dependencies import get_current_user
+from ...utils.image_storage import is_inline_image, store_image as _store_image
 
 
 router = APIRouter()
@@ -26,6 +27,16 @@ router = APIRouter()
 
 def _uid() -> str:
     return secrets.token_hex(16)
+
+
+def _maybe_store_image(user_id: str, item_id: str, original_image_url: str | None) -> tuple[str | None, str | None, str | None]:
+    """若图片是 inline base64 则自动落盘, 返回 (storage_key, mime, url); 否则原样返回."""
+    if not original_image_url or not is_inline_image(original_image_url):
+        return None, None, None
+    stored = _store_image(user_id, item_id, original_image_url)
+    if stored is None:
+        return None, None, None
+    return stored.storage_key, stored.mime_type, stored.url
 
 
 def _to_out(item: ErrorItem, db: Session) -> ErrorItemOut:
@@ -136,13 +147,17 @@ def create_error_item(
         if not s or s.user_id != user.id:
             raise HTTPException(status_code=400, detail="Invalid subject_id")
 
+    item_id = _uid()
+    # 若前端只传了 inline base64 originalImageUrl, 自动落盘
+    auto_key, auto_mime, auto_url = _maybe_store_image(user.id, item_id, payload.original_image_url)
+
     item = ErrorItem(
-        id=_uid(),
+        id=item_id,
         user_id=user.id,
         subject_id=subject_id,
-        original_image_url=payload.original_image_url,
-        image_storage_key=payload.image_storage_key,
-        image_mime_type=payload.image_mime_type,
+        original_image_url=auto_url or payload.original_image_url,
+        image_storage_key=payload.image_storage_key or auto_key,
+        image_mime_type=payload.image_mime_type or auto_mime,
         reference_image_url=payload.reference_image_url,
         wrong_answer_image_url=payload.wrong_answer_image_url,
         ocr_text=payload.ocr_text,
@@ -164,7 +179,7 @@ def create_error_item(
     db.commit()
 
     db.refresh(item)
-    db.refresh(item.subject)
+    if item.subject: db.refresh(item.subject)
     return _to_out(item, db)
 
 
@@ -217,7 +232,7 @@ def update_error_item(
 
     db.commit()
     db.refresh(item)
-    db.refresh(item.subject)
+    if item.subject: db.refresh(item.subject)
     return _to_out(item, db)
 
 
