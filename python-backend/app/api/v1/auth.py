@@ -53,6 +53,7 @@ def register(payload: UserRegister, db: Session = Depends(get_db)) -> User:
 # ---------- 登录 ----------
 @router.post("/auth/login", response_model=TokenResponse)
 def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
+    from ...schemas.user import UserOut
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -64,7 +65,9 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
         subject=user.id,
         expires_delta=timedelta(minutes=settings.jwt_expire_minutes),
     )
-    return TokenResponse(access_token=token)
+    # 登录同时返回 user, 省前端一次 me() 调用
+    user_out = UserOut.model_validate(user)
+    return TokenResponse(access_token=token, user=user_out)
 
 
 # ---------- 当前用户 ----------

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic.alias_generators import to_camel
 
 
 class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
     name: str | None = Field(default=None, max_length=128)
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class UserLogin(BaseModel):
@@ -19,6 +22,9 @@ class UserLogin(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    user: "UserOut | None" = None
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 class UserOut(BaseModel):
@@ -31,7 +37,7 @@ class UserOut(BaseModel):
     education_stage: str | None = None
     enrollment_year: int | None = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
 
 class UserUpdate(BaseModel):
@@ -43,3 +49,7 @@ class UserUpdate(BaseModel):
 class ChangePassword(BaseModel):
     old_password: str
     new_password: str = Field(min_length=6, max_length=128)
+
+
+# Forward ref for TokenResponse.user
+TokenResponse.model_rebuild()

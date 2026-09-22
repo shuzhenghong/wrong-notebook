@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 
 # ========== Subject ==========
@@ -11,7 +12,7 @@ class SubjectCreate(BaseModel):
 
 
 class SubjectUpdate(BaseModel):
-    name: str
+    name: str | None = None
 
 
 class SubjectOut(BaseModel):
@@ -19,7 +20,7 @@ class SubjectOut(BaseModel):
     name: str
     error_count: int = 0
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
 
 # ========== KnowledgeTag ==========
@@ -42,13 +43,13 @@ class KnowledgeTagOut(BaseModel):
     id: str
     name: str
     subject: str
-    parent_id: str | None
-    code: str | None
+    parent_id: str | None = None
+    code: str | None = None
     order: int
     is_system: bool
     children: list["KnowledgeTagOut"] = []
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
 
 KnowledgeTagOut.model_rebuild()

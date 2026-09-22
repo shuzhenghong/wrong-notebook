@@ -76,10 +76,15 @@ def list_error_items(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     subject_id: str | None = None,
+    notebook_id: str | None = Query(None, alias="notebookId"),  # 前端兼容
     mastery_level: int | None = Query(None, ge=0, le=2),
     keyword: str | None = None,
     tag_id: str | None = None,
 ) -> ErrorItemListResponse:
+    # 兼容 notebookId → subject_id
+    if notebook_id and not subject_id:
+        subject_id = notebook_id
+
     stmt = select(ErrorItem).where(ErrorItem.user_id == user.id)
     if subject_id:
         stmt = stmt.where(ErrorItem.subject_id == subject_id)
