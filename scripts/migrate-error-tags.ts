@@ -6,7 +6,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { findParentTagIdForGrade } from '../src/lib/tag-recognition';
+import { findParentTagIdForGrade } from './tag-helpers';
 
 const prisma = new PrismaClient();
 
@@ -73,7 +73,7 @@ async function main() {
             if (!tag) {
                 // 尝试根据错题的年级学期查找 parentId
                 const gradeStr = item.gradeSemester;
-                const parentId = await findParentTagIdForGrade(gradeStr, subjectKey);
+                const parentId = await findParentTagIdForGrade(prisma, gradeStr, subjectKey);
 
                 tag = await prisma.knowledgeTag.create({
                     data: {
