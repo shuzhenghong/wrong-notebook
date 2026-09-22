@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -73,8 +72,6 @@ def seed_knowledge_tags() -> None:
 
 
 if __name__ == "__main__":
-    import sys
-
     init_db()
     seed_admin()
     seed_knowledge_tags()

@@ -35,3 +35,11 @@ class AIService(ABC):
         option_count: int = 4,
     ) -> PracticeQuestion:
         """基于错题生成干扰项 / 练习小题."""
+
+    @abstractmethod
+    async def reanswer(self, question: str, subject: str | None = None) -> str:
+        """用 LLM 重新解答一道纯文本题目, 返回解答文本."""
+
+    @abstractmethod
+    async def ping(self) -> str:
+        """真实连通性探测 — 实际打一次最小请求验证 key 有效, 返回 provider 信息."""

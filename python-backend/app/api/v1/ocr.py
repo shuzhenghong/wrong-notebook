@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import threading
 import time
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,11 +78,14 @@ def _cleanup_cache() -> None:
             del _cache[k]
 
 
-def _recognize(buf: bytes) -> OcrResponse:
+def _recognize(buf: bytes, user_id: str) -> OcrResponse:
+    # 缓存键加 user_id 前缀: 不同用户上传同一张图 (相同 sha256) 不会命中彼此的缓存,
+    # 避免 OCR 结果 (可能含敏感题目信息) 跨用户泄漏.
     sha = hashlib.sha256(buf).hexdigest()
+    cache_key = f"{user_id}:{sha}"
     now = time.time()
-    if sha in _cache and _cache[sha][0] > now:
-        return _cache[sha][1]
+    if cache_key in _cache and _cache[cache_key][0] > now:
+        return _cache[cache_key][1]
 
     try:
         engine = _get_engine()
@@ -116,7 +117,7 @@ def _recognize(buf: bytes) -> OcrResponse:
         )
 
     _cleanup_cache()
-    _cache[sha] = (now + _CACHE_TTL, resp)
+    _cache[cache_key] = (now + _CACHE_TTL, resp)
     return resp
 
 
@@ -156,4 +157,4 @@ def ocr(
         raise HTTPException(status_code=400, detail="Provide either key or imageBase64")
 
     logger.info("OCR request userId=%s bytes=%d", user.id, len(buf))
-    return _recognize(buf)
+    return _recognize(buf, user.id)

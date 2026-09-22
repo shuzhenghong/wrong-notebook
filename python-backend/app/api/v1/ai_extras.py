@@ -1,21 +1,23 @@
 """AI 相关额外路由 — reanswer, geogebra-analyze, ai/models, ai/test.
 
-Next.js 原版在 src/app/api/ai/models/, ai/test/, reanswer/, geogebra-analyze/.
-Python AI service 目前只有 analyze_image + generate_practice,
-所以这些端点暂时返回占位响应 (不影响前端能正常调用).
+reanswer: 有图走 analyze_image (真), 纯文本走 ai.reanswer (真).
+ai/test: 真实打一次 provider ping 验证连通性, 不再永远返回假成功.
+ai/models: 静态模型目录 (无远端调用, 属正常).
+geogebra-analyze: 轻量启发式 (无文本 GeoGebra 生成能力时作为降级).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from ...database import get_db
 from ...models import User
+from ...config import get_settings
 from ...utils.dependencies import get_current_user
+from ...utils.logger import get_logger
 
 
 router = APIRouter()
+logger = get_logger("api:ai-extras")
 
 
 # =====================================================================
@@ -27,35 +29,50 @@ async def reanswer(
     body: dict,
     _user: User = Depends(get_current_user),
 ) -> dict:
-    """AI 重新解题 — 占位实现 (Python AI service 暂未实现 reanswer).
+    """AI 重新解题.
 
-    Next.js 原版: src/app/api/reanswer/route.ts 调 aiService.reanswerQuestion().
-    Python AI service 只有 analyze_image + generate_practice,
-    所以这里返回一个合理的占位.
+    - 有图: 走 analyze_image (真实识别 + 解析).
+    - 纯文本: 走 ai.reanswer (真实 LLM 解答).
+    - 若 AI 未配置 (取不到 service): 返回 503, 明确告知需要配置, 不再伪造假成功.
     """
     question_text = body.get("questionText", "")
     if not question_text or not question_text.strip():
         raise HTTPException(status_code=400, detail="Missing question text")
 
-    # 尝试用 analyze_image (如果有图片). 否则返回简单模板
     image = body.get("imageBase64")
     if image:
         try:
             from ...services.ai import get_ai_service
             ai = get_ai_service()
-            # 把 base64 image 转成 data URL 风格
             if not image.startswith("data:"):
                 image = f"data:image/png;base64,{image}"
             result = await ai.analyze_image(image, subject=body.get("subject", "数学"))
-            return result
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"AI error: {e}")
+            return result.model_dump() if hasattr(result, "model_dump") else result
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("reanswer AI call failed")
+            raise HTTPException(status_code=502, detail="AI service call failed")
 
-    # 纯文本 reanswer — 返回占位
+    # 纯文本 reanswer — 真实调用 provider
+    try:
+        from ...services.ai import get_ai_service
+        ai = get_ai_service()
+    except Exception:  # noqa: BLE001 - 未配置 provider
+        raise HTTPException(
+            status_code=503,
+            detail="AI provider not configured (set ai_provider + api key in .env).",
+        )
+    try:
+        answer = await ai.reanswer(question_text, subject=body.get("subject"))
+    except Exception:  # noqa: BLE001
+        logger.exception("reanswer AI call failed")
+        raise HTTPException(status_code=502, detail="AI service call failed")
+
     return {
         "question": question_text,
-        "answer": None,  # AI not configured
-        "analysis": "AI reanswer requires API keys (not configured).",
+        "answer": answer,
+        "analysis": None,
         "language": body.get("language", "zh"),
     }
 
@@ -121,10 +138,27 @@ async def test_ai_connection(
     body: dict,
     _user: User = Depends(get_current_user),
 ) -> dict:
-    """测试 AI 连接 — 简化实现, 不实际调用 AI."""
-    provider = body.get("provider", "unknown")
-    return {
-        "success": True,
-        "message": f"AI {provider} config accepted (placeholder test).",
-        "provider": provider,
-    }
+    """测试 AI 连接 — 真实打一次 provider ping, 验证 key / endpoint 有效."""
+    provider = body.get("provider") or get_settings().ai_provider
+    try:
+        from ...services.ai import get_ai_service
+
+        ai = get_ai_service()
+    except Exception as exc:  # noqa: BLE001 - 未配置 provider
+        return {
+            "success": False,
+            "provider": provider,
+            "message": f"AI provider not configured: {exc}",
+        }
+
+    try:
+        info = await ai.ping()
+    except Exception as exc:  # noqa: BLE001 - 连通/鉴权失败
+        logger.warning("AI ping failed: %s", exc)
+        return {
+            "success": False,
+            "provider": provider,
+            "message": f"AI connection failed: {type(exc).__name__}",
+        }
+
+    return {"success": True, "provider": provider, "message": f"AI OK: {info}"}

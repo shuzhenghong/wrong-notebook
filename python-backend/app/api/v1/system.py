@@ -6,16 +6,19 @@ Next.js 版这两个 API 不依赖 Prisma, Python 版用 config 文件 + 硬编�
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from fastapi import APIRouter
 
-from ...config import get_settings
+from ...config import BASE_DIR, get_settings
+from ...utils.app_config import allow_registration
 from ...utils.logger import get_logger
 
 
 router = APIRouter()
 logger = get_logger("api.system")
+
+# 仓库根 = python-backend 的上一级
+REPO_ROOT = BASE_DIR.parent
 
 
 @router.get("/version")
@@ -24,13 +27,12 @@ def get_version() -> dict:
     settings = get_settings()
     pkg_version = "unknown"
     try:
-        # 尝试读 Next.js 原版 package.json
-        # app/api/v1/system.py → parents[4] = /workspace (项目根)
-        pkg = Path(__file__).resolve().parents[4] / "package.json"
+        # 尝试读 Next.js 原版 package.json (仓库根)
+        pkg = REPO_ROOT / "package.json"
         if pkg.exists():
-            pkg_version = json.loads(pkg.read_text()).get("version", "unknown")
-    except Exception:
-        pass
+            pkg_version = json.loads(pkg.read_text(encoding="utf-8")).get("version", "unknown")
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Failed to read package.json: %s", exc)
     return {
         "version": pkg_version,
         "backend": "fastapi",
@@ -40,14 +42,9 @@ def get_version() -> dict:
 
 @router.get("/register/status")
 def register_status() -> dict:
-    """注册是否开放 — 读 app-config.json."""
-    # 默认开放 (Next.js 原版 config 默认 allowRegistration !== false)
-    allow = True
-    try:
-        cfg_path = Path(__file__).resolve().parents[5] / "config" / "app-config.json"
-        if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text())
-            allow = cfg.get("allowRegistration", True)
-    except Exception as exc:
-        logger.debug("Failed to read app-config.json: %s", exc)
-    return {"allowRegistration": allow}
+    """注册是否开放 — 读 app-config.json.
+
+    原实现用 parents[5] 去猜路径 (同一个文件里 /version 用的是 parents[4]),
+    索引不一致导致读的根本不是同一个项目目录. 现统一走 app_config 模块.
+    """
+    return {"allowRegistration": allow_registration()}

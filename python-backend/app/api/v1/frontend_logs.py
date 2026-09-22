@@ -20,6 +20,24 @@ MAX_LOG_ENTRIES = 50
 MAX_MESSAGE_LENGTH = 2000
 MAX_CONTEXT_KEYS = 20
 
+# logging 的保留属性 — 出现在 extra 里会直接把 log() 调用打崩
+_RESERVED_LOG_ATTRS = frozenset({
+    "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+    "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+    "created", "msecs", "relativeCreated", "thread", "threadName",
+    "processName", "process", "message", "asctime", "taskName",
+})
+
+
+def _safe_extra(ctx: dict) -> dict:
+    """过滤掉会与 LogRecord 冲突的键, 并统一加前缀避免污染."""
+    safe = {}
+    for k, v in ctx.items():
+        if k in _RESERVED_LOG_ATTRS:
+            k = f"ctx_{k}"
+        safe[k] = v
+    return safe
+
 
 class LogEntry(BaseModel):
     level: str = Field(default="info", pattern="^(info|warn|error)$")
@@ -90,12 +108,15 @@ def post_frontend_log(
             **safe_ctx,
         }
 
+        # 之前写法是 logger.error(ctx, trimmed) —— ctx 被当成 msg 的格式化参数,
+        # 结构化字段全部丢失. 正确做法是通过 extra= 传入.
+        extra = _safe_extra(ctx)
         if entry.level == "error":
-            logger.error(ctx, trimmed)
+            logger.error(trimmed, extra=extra)
         elif entry.level == "warn":
-            logger.warning(ctx, trimmed)
+            logger.warning(trimmed, extra=extra)
         else:
-            logger.info(ctx, trimmed)
+            logger.info(trimmed, extra=extra)
         accepted += 1
 
     return LogResponse(success=True, count=accepted)

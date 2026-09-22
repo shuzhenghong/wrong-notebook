@@ -20,3 +20,7 @@ httpx>=0.27.2
 # 工具
 python-dotenv>=1.0.1
 python-dateutil>=2.9.0
+email-validator>=2.0.0  # pydantic EmailStr 依赖
+
+# 可选: 多副本部署时启用 Redis 共享限流计数 (配置 REDIS_URL 后自动启用; 未装则自动回退进程内)
+redis>=5.0.0

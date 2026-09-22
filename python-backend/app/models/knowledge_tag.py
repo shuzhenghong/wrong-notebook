@@ -1,5 +1,6 @@
 """KnowledgeTag — Prisma KnowledgeTag."""
 from datetime import datetime
+from ..utils.timeutil import utc_now
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
@@ -14,8 +15,8 @@ class KnowledgeTag(Base):
     code: Mapped[str | None] = mapped_column("code", String(32), nullable=True)
     is_system: Mapped[bool] = mapped_column("isSystem", Boolean, default=False, nullable=False)
     user_id: Mapped[str | None] = mapped_column("userId", ForeignKey("User.id", ondelete="CASCADE"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     parent: Mapped["KnowledgeTag | None"] = relationship(remote_side=[id], back_populates="children")
     children: Mapped[list["KnowledgeTag"]] = relationship(back_populates="parent")

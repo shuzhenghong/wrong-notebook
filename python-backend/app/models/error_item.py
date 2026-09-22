@@ -1,5 +1,6 @@
 """Subject / ErrorItem / ReviewSchedule / PracticeRecord — Prisma schema 对齐."""
 from datetime import datetime
+from ..utils.timeutil import utc_now
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
@@ -16,8 +17,8 @@ class Subject(Base):
     id: Mapped[str] = mapped_column("id", String(32), primary_key=True)
     name: Mapped[str] = mapped_column("name", String(255), nullable=False)
     user_id: Mapped[str] = mapped_column("userId", ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     user: Mapped["User"] = relationship(back_populates="subjects")
     error_items: Mapped[list["ErrorItem"]] = relationship(back_populates="subject")
 
@@ -47,8 +48,8 @@ class ErrorItem(Base):
     mastery_level: Mapped[int] = mapped_column("masteryLevel", Integer, default=0, nullable=False)
     grade_semester: Mapped[str | None] = mapped_column("gradeSemester", String(128), nullable=True)
     paper_level: Mapped[str | None] = mapped_column("paperLevel", String(16), nullable=True)
-    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column("updatedAt", DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     user: Mapped["User"] = relationship(back_populates="error_items")
     subject: Mapped["Subject | None"] = relationship(back_populates="error_items")
     tags: Mapped[list["KnowledgeTag"]] = relationship(secondary="_ErrorItemToKnowledgeTag", back_populates="error_items")
@@ -62,7 +63,7 @@ class ReviewSchedule(Base):
     scheduled_for: Mapped[datetime] = mapped_column("scheduledFor", DateTime, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column("completedAt", DateTime, nullable=True)
     is_correct: Mapped[bool | None] = mapped_column("isCorrect", Boolean, nullable=True)
-    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=utc_now, nullable=False)
     error_item: Mapped["ErrorItem"] = relationship(back_populates="review_schedules")
 
 class PracticeRecord(Base):
@@ -73,6 +74,6 @@ class PracticeRecord(Base):
     subject: Mapped[str | None] = mapped_column("subject", String(64), nullable=True)
     difficulty: Mapped[str | None] = mapped_column("difficulty", String(16), nullable=True)
     is_correct: Mapped[bool | None] = mapped_column("isCorrect", Boolean, nullable=True)
-    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("createdAt", DateTime, default=utc_now, nullable=False)
     user: Mapped["User"] = relationship(back_populates="practice_records")
     error_item: Mapped["ErrorItem | None"] = relationship(back_populates="practice_records")

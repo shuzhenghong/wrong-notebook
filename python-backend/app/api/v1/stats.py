@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...models import ErrorItem, PracticeRecord, User
+from ...models import ErrorItem, PracticeRecord, Subject, User
 from ...utils.dependencies import get_current_user
+from ...utils.timeutil import month_keys, utc_now
 
 
 router = APIRouter()
@@ -22,35 +23,27 @@ def overview(
     user: User = Depends(get_current_user),
     days: int = Query(30, ge=1, le=365),
 ) -> dict:
-    since = datetime.utcnow() - timedelta(days=days)
+    """总览统计 — 原来 6 次独立 count 查询, 合并成 2 次."""
+    since = utc_now() - timedelta(days=days)
 
-    total_items = db.scalar(
-        select(func.count()).select_from(ErrorItem).where(ErrorItem.user_id == user.id)
-    ) or 0
-    new_recent = db.scalar(
-        select(func.count()).select_from(ErrorItem).where(
-            ErrorItem.user_id == user.id, ErrorItem.created_at >= since
-        )
-    ) or 0
-    mastered = db.scalar(
-        select(func.count()).select_from(ErrorItem).where(
-            ErrorItem.user_id == user.id, ErrorItem.mastery_level == 2
-        )
-    ) or 0
+    # 一次 group by 拿到错题的 总数 / 近期新增 / 已掌握
+    item_row = db.query(
+        func.count(ErrorItem.id),
+        func.sum(case((ErrorItem.created_at >= since, 1), else_=0)),
+        func.sum(case((ErrorItem.mastery_level == 2, 1), else_=0)),
+    ).filter(ErrorItem.user_id == user.id).first()
+    total_items = int(item_row[0] or 0) if item_row else 0
+    new_recent = int(item_row[1] or 0) if item_row else 0
+    mastered = int(item_row[2] or 0) if item_row else 0
 
-    practice_total = db.scalar(
-        select(func.count()).select_from(PracticeRecord).where(PracticeRecord.user_id == user.id)
-    ) or 0
-    practice_recent = db.scalar(
-        select(func.count()).select_from(PracticeRecord).where(
-            PracticeRecord.user_id == user.id, PracticeRecord.created_at >= since
-        )
-    ) or 0
-    practice_correct = db.scalar(
-        select(func.count()).select_from(PracticeRecord).where(
-            PracticeRecord.user_id == user.id, PracticeRecord.is_correct.is_(True)
-        )
-    ) or 0
+    practice_row = db.query(
+        func.count(PracticeRecord.id),
+        func.sum(case((PracticeRecord.created_at >= since, 1), else_=0)),
+        func.sum(case((PracticeRecord.is_correct.is_(True), 1), else_=0)),
+    ).filter(PracticeRecord.user_id == user.id).first()
+    practice_total = int(practice_row[0] or 0) if practice_row else 0
+    practice_recent = int(practice_row[1] or 0) if practice_row else 0
+    practice_correct = int(practice_row[2] or 0) if practice_row else 0
 
     return {
         "window_days": days,
@@ -84,24 +77,30 @@ def by_subject(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[dict]:
-    from ..v1.notebooks import _uid  # noqa: F401  避免循环导入 lint
+    """按错题本统计 — 原来对每个 subject 单独 db.get() 查名字 (N+1).
 
-    rows = (
+    改成: 一次取名字表 + 一次 group by 计数, 共 2 条 SQL.
+    """
+    subjects = {
+        s.id: s.name
+        for s in db.scalars(select(Subject).where(Subject.user_id == user.id)).all()
+    }
+    counts = (
         db.query(ErrorItem.subject_id, func.count(ErrorItem.id))
         .filter(ErrorItem.user_id == user.id)
         .group_by(ErrorItem.subject_id)
         .all()
     )
+
     result: list[dict] = []
-    for sid, cnt in rows:
-        # 若 sid 为空, 放到 "未分类"
+    for sid, cnt in counts:
         if not sid:
             result.append({"subject_id": None, "subject_name": "未分类", "count": cnt})
-            continue
-        from ...models import Subject
-
-        s = db.get(Subject, sid)
-        result.append({"subject_id": sid, "subject_name": s.name if s else "(deleted)", "count": cnt})
+        elif sid in subjects:
+            result.append({"subject_id": sid, "subject_name": subjects[sid], "count": cnt})
+        else:
+            result.append({"subject_id": sid, "subject_name": "(deleted)", "count": cnt})
+    result.sort(key=lambda x: x["count"], reverse=True)
     return result
 
 
@@ -117,61 +116,62 @@ def practice_stats_nextjs_compat(
     user: User = Depends(get_current_user),
 ) -> dict:
     """Next.js 前端调用的练习统计 — 与 /api/practice/* 并行存在."""
-    from sqlalchemy import and_, or_
-    from datetime import date
-    from calendar import monthrange
-
-    # 1. Subject Distribution
-    rows = (
-        db.query(PracticeRecord.subject, func.count(PracticeRecord.id))
-        .filter(PracticeRecord.user_id == user.id)
-        .group_by(PracticeRecord.subject)
-        .all()
-    )
+    # 1. Subject Distribution (SQL 聚合)
     subject_stats = [
-        {"name": subj or "Unknown", "value": cnt} for subj, cnt in rows
+        {"name": subj or "Unknown", "value": cnt}
+        for subj, cnt in (
+            db.query(PracticeRecord.subject, func.count(PracticeRecord.id))
+            .filter(PracticeRecord.user_id == user.id)
+            .group_by(PracticeRecord.subject)
+            .all()
+        )
     ]
 
     # 2. Monthly Activity (Last 6 months)
-    now = datetime.utcnow()
-    monthly: dict[str, dict] = {}
-    for i in range(5, -1, -1):
-        d = now - timedelta(days=30 * i)
-        key = d.strftime("%Y-%m")
-        monthly[key] = {"date": key, "total": 0, "correct": 0}
-
-    records = (
-        db.query(PracticeRecord)
+    #    只取需要的 3 列, 不再把整张表的 ORM 对象全加载进内存
+    rows = (
+        db.query(
+            PracticeRecord.created_at,
+            PracticeRecord.is_correct,
+            PracticeRecord.difficulty,
+        )
         .filter(PracticeRecord.user_id == user.id)
         .all()
     )
-    for rec in records:
-        if not rec.created_at:
+
+    monthly: dict[str, dict] = {k: {"date": k, "total": 0, "correct": 0} for k in month_keys(6)}
+
+    total = 0
+    correct = 0
+    for created_at, is_correct, difficulty in rows:
+        total += 1
+        if is_correct:
+            correct += 1
+        if not created_at:
             continue
-        key = rec.created_at.strftime("%Y-%m")
-        if key in monthly:
-            monthly[key]["total"] += 1
-            if rec.is_correct:
-                monthly[key]["correct"] += 1
-            diff = rec.difficulty or "Unknown"
-            monthly[key][diff] = monthly[key].get(diff, 0) + 1
+        key = created_at.strftime("%Y-%m")
+        bucket = monthly.get(key)
+        if bucket is None:
+            continue
+        bucket["total"] += 1
+        if is_correct:
+            bucket["correct"] += 1
+        diff = difficulty or "Unknown"
+        bucket[diff] = bucket.get(diff, 0) + 1
 
     chart_data = sorted(monthly.values(), key=lambda x: x["date"])
 
-    # 3. Difficulty Distribution
-    diff_rows = (
-        db.query(PracticeRecord.difficulty, func.count(PracticeRecord.id))
-        .filter(PracticeRecord.user_id == user.id)
-        .group_by(PracticeRecord.difficulty)
-        .all()
-    )
+    # 3. Difficulty Distribution (SQL 聚合)
     difficulty_stats = [
-        {"name": d or "Unknown", "value": cnt} for d, cnt in diff_rows
+        {"name": d or "Unknown", "value": cnt}
+        for d, cnt in (
+            db.query(PracticeRecord.difficulty, func.count(PracticeRecord.id))
+            .filter(PracticeRecord.user_id == user.id)
+            .group_by(PracticeRecord.difficulty)
+            .all()
+        )
     ]
 
-    # 4. Overall Correctness
-    total = len(records)
-    correct = sum(1 for r in records if r.is_correct)
     rate = round(correct / total * 100, 1) if total else 0.0
 
     return {
@@ -190,4 +190,4 @@ def practice_stats_clear_nextjs_compat(
     """Next.js 前端调用的练习记录清除 — 委托给 practice.clear 逻辑."""
     n = db.query(PracticeRecord).filter(PracticeRecord.user_id == user.id).delete()
     db.commit()
-    return {"message": f"Practice history cleared successfully", "count": n}
+    return {"message": "Practice history cleared successfully", "count": n}

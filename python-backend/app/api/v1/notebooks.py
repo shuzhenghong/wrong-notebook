@@ -24,20 +24,24 @@ def _uid() -> str:
 # ---------- 列表 ----------
 @router.get("", response_model=list[SubjectOut])
 def list_notebooks(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[SubjectOut]:
-    # 查询错题数: 子查询
+    """错题本列表.
+
+    原实现对每个错题本单独 count 一次 (N+1): 50 个错题本就是 51 条 SQL.
+    改为一条 GROUP BY 一次性取出全部计数.
+    """
+    counts: dict[str | None, int] = dict(
+        db.query(ErrorItem.subject_id, func.count(ErrorItem.id))
+        .filter(ErrorItem.user_id == user.id)
+        .group_by(ErrorItem.subject_id)
+        .all()
+    )
+
     stmt = select(Subject).where(Subject.user_id == user.id).order_by(Subject.created_at.desc())
     subjects = db.scalars(stmt).all()
-
-    out: list[SubjectOut] = []
-    for s in subjects:
-        cnt = (
-            db.query(func.count(ErrorItem.id))
-            .filter(ErrorItem.subject_id == s.id, ErrorItem.user_id == user.id)
-            .scalar()
-            or 0
-        )
-        out.append(SubjectOut(id=s.id, name=s.name, error_count=cnt))
-    return out
+    return [
+        SubjectOut(id=s.id, name=s.name, error_count=counts.get(s.id, 0))
+        for s in subjects
+    ]
 
 
 # ---------- 创建 ----------

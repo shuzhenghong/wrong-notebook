@@ -92,6 +92,29 @@ class OpenAICompatibleService(AIService):
         raw = resp.choices[0].message.content or ""
         return _parse_practice(raw)
 
+    # ------------------ reanswer ------------------
+    async def reanswer(self, question: str, subject: str | None = None) -> str:
+        subject_hint = f"（科目：{subject}）" if subject else ""
+        resp = await self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一名耐心的解题老师，请逐步推理并给出最终答案。",
+                },
+                {"role": "user", "content": f"请解答以下题目{subject_hint}：\n{question}"},
+            ],
+            temperature=0.3,
+            max_tokens=1024,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    # ------------------ ping ------------------
+    async def ping(self) -> str:
+        # 实际列一次模型即可验证 key / endpoint 是否有效, 不消耗太多额度
+        await self._client.models.list()
+        return f"openai-compatible ({self._model})"
+
 
 def _parse_analyze(raw: str) -> dict[str, Any]:
     tags = extract_xml_tags(raw)

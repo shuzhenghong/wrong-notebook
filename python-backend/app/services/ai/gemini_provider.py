@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mimetypes
 from typing import Any
 
 from ...config import get_settings
@@ -76,6 +75,26 @@ class GeminiService(AIService):
         )
         return _parse_practice(raw)
 
+    # ------------------ reanswer ------------------
+    async def reanswer(self, question: str, subject: str | None = None) -> str:
+        subject_hint = f"（科目：{subject}）" if subject else ""
+        return (
+            await self._call(
+                system="你是一名耐心的解题老师，请逐步推理并给出最终答案。",
+                user_text=f"请解答以下题目{subject_hint}：\n{question}",
+                max_tokens=1024,
+                temperature=0.3,
+            )
+        ).strip()
+
+    # ------------------ ping ------------------
+    async def ping(self) -> str:
+        # 发一次极小的生成请求验证 key 有效
+        result = await self._call(
+            system="", user_text="ping", max_tokens=1, temperature=0.0
+        )
+        return f"gemini ({self._model})"
+
     # ------------------ 调用实现 ------------------
     async def _call(
         self,
@@ -136,8 +155,6 @@ class GeminiService(AIService):
         temperature: float,
     ) -> str:
         """无 SDK 时用 HTTP 直连 (v1beta generateContent)."""
-        import base64
-
         import httpx
 
         url = (

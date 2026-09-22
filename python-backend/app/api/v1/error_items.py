@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import secrets
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ...database import get_db
-from ...models import ErrorItem, KnowledgeTag, Subject, User, error_item_tags
+from ...models import ErrorItem, KnowledgeTag, Subject, User
 from ...schemas.ai import MessageResponse
 from ...schemas.error_item import (
     ErrorItemCreate,
@@ -19,7 +18,11 @@ from ...schemas.error_item import (
     ErrorItemUpdate,
 )
 from ...utils.dependencies import get_current_user
-from ...utils.image_storage import is_inline_image, store_image as _store_image
+from ...utils.image_storage import (
+    delete_image,
+    is_inline_image,
+    store_image as _store_image,
+)
 
 
 router = APIRouter()
@@ -96,14 +99,14 @@ def list_error_items(
     if notebook_id and not subject_id:
         subject_id = notebook_id
 
-    stmt = select(ErrorItem).where(ErrorItem.user_id == user.id)
+    filters = [ErrorItem.user_id == user.id]
     if subject_id:
-        stmt = stmt.where(ErrorItem.subject_id == subject_id)
+        filters.append(ErrorItem.subject_id == subject_id)
     if mastery_level is not None:
-        stmt = stmt.where(ErrorItem.mastery_level == mastery_level)
+        filters.append(ErrorItem.mastery_level == mastery_level)
     if keyword:
         like = f"%{keyword}%"
-        stmt = stmt.where(
+        filters.append(
             or_(
                 ErrorItem.question_text.ilike(like),
                 ErrorItem.analysis.ilike(like),
@@ -112,20 +115,24 @@ def list_error_items(
             )
         )
     if tag_id:
-        stmt = stmt.join(ErrorItem.tags).where(KnowledgeTag.id == tag_id)
+        # 用 EXISTS 而不是 JOIN: JOIN 会让"一题多标签"的行重复出现,
+        # 导致 count 偏大且分页数量与列表对不上.
+        filters.append(ErrorItem.tags.any(KnowledgeTag.id == tag_id))
 
     # 总数
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    total = db.scalar(select(func.count()).select_from(ErrorItem).where(*filters)) or 0
 
-    stmt = stmt.order_by(ErrorItem.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    items = db.scalars(stmt.unique()) if tag_id else db.scalars(stmt)
-    # 预加载 tags + subject
-    items = (
-        db.query(ErrorItem)
+    # 单次查询: 预加载关系 + 排序 + 分页一次搞定
+    # (原实现先查 id 再按 id 查一遍, 第二次查询丢了 order_by, 顺序会漂移)
+    stmt = (
+        select(ErrorItem)
+        .where(*filters)
         .options(selectinload(ErrorItem.subject), selectinload(ErrorItem.tags))
-        .filter(ErrorItem.id.in_([i.id for i in items]))
-        .all()
+        .order_by(ErrorItem.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
+    items = db.scalars(stmt).all()
     return ErrorItemListResponse(
         items=[_to_out(i, db) for i in items],
         total=total,
@@ -170,6 +177,7 @@ def create_error_item(
         source=payload.source,
         error_type=payload.error_type,
         user_notes=payload.user_notes,
+        mastery_level=payload.mastery_level,
         grade_semester=payload.grade_semester,
         paper_level=payload.paper_level,
     )
@@ -236,6 +244,21 @@ def update_error_item(
     return _to_out(item, db)
 
 
+def _delete_items_and_images(db: Session, stmt_filters) -> int:  # noqa: ANN001
+    """按条件批量删除错题, 并同步清理磁盘上的图片文件."""
+    keys = [
+        k
+        for (k,) in db.query(ErrorItem.image_storage_key)
+        .filter(*stmt_filters, ErrorItem.image_storage_key.isnot(None))
+        .all()
+    ]
+    deleted = db.query(ErrorItem).filter(*stmt_filters).delete(synchronize_session=False)
+    db.commit()
+    for k in keys:
+        delete_image(k)
+    return deleted
+
+
 # ---------- 删除 ----------
 @router.delete("/clear")
 def clear_all_nextjs_compat(
@@ -243,12 +266,7 @@ def clear_all_nextjs_compat(
     user: User = Depends(get_current_user),
 ) -> dict:
     """Next.js 兼容端点 — 委托给 clear_all 逻辑."""
-    deleted = (
-        db.query(ErrorItem)
-        .filter(ErrorItem.user_id == user.id)
-        .delete(synchronize_session=False)
-    )
-    db.commit()
+    deleted = _delete_items_and_images(db, [ErrorItem.user_id == user.id])
     return {"message": f"Cleared {deleted} items", "count": deleted}
 
 @router.post("/batch-delete", response_model=MessageResponse)
@@ -260,12 +278,9 @@ def batch_delete(
     ids = payload.get("ids", [])
     if not ids:
         return MessageResponse(message="No ids")
-    deleted = (
-        db.query(ErrorItem)
-        .filter(ErrorItem.id.in_(ids), ErrorItem.user_id == user.id)
-        .delete(synchronize_session=False)
+    deleted = _delete_items_and_images(
+        db, [ErrorItem.id.in_(ids), ErrorItem.user_id == user.id]
     )
-    db.commit()
     return MessageResponse(message=f"Deleted {deleted} items")
 
 
@@ -275,12 +290,7 @@ def clear_all(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> MessageResponse:
-    deleted = (
-        db.query(ErrorItem)
-        .filter(ErrorItem.user_id == user.id)
-        .delete(synchronize_session=False)
-    )
-    db.commit()
+    deleted = _delete_items_and_images(db, [ErrorItem.user_id == user.id])
     return MessageResponse(message=f"Cleared {deleted} items")
 
 

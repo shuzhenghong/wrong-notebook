@@ -5,21 +5,30 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ...database import get_db
 from ...models import ErrorItem, PracticeRecord, Subject, User
 from ...schemas.user import UserOut
 from ...utils.auth import hash_password
 from ...utils.dependencies import require_admin
+from ...utils.logger import get_logger
 
 
 router = APIRouter()
+logger = get_logger("api:admin")
 
 
 def _uid() -> str:
     return secrets.token_hex(16)
+
+
+class SystemResetRequest(BaseModel):
+    """清库是高危操作 — 必须显式二次确认."""
+
+    confirm: str = ""
 
 
 @router.get("/dashboard")
@@ -115,15 +124,33 @@ def delete_user(
 
 @router.post("/system-reset")
 def system_reset(
+    payload: SystemResetRequest | None = None,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> dict:
-    """危险 — 清空所有业务数据 (保留 admin 用户)."""
-    db.query(ErrorItem).delete(synchronize_session=False)
-    db.query(PracticeRecord).delete(synchronize_session=False)
-    db.query(Subject).delete(synchronize_session=False)
+    """危险 — 清空所有业务数据 (保留 admin 用户).
+
+    必须传 {"confirm": "DELETE ALL DATA"} 才会真正执行,
+    避免前端误触或 CSRF 直接清库.
+    """
+    if not payload or payload.confirm != "DELETE ALL DATA":
+        raise HTTPException(
+            status_code=400,
+            detail='Confirmation required: send {"confirm": "DELETE ALL DATA"}',
+        )
+
+    items = db.query(ErrorItem).delete(synchronize_session=False)
+    practices = db.query(PracticeRecord).delete(synchronize_session=False)
+    subjects = db.query(Subject).delete(synchronize_session=False)
     db.commit()
-    return {"message": "Reset complete (admin preserved)"}
+    logger.warning(
+        "SYSTEM RESET by admin %s: %d items, %d practices, %d subjects",
+        admin.email, items, practices, subjects,
+    )
+    return {
+        "message": "Reset complete (admin preserved)",
+        "deleted": {"error_items": items, "practice_records": practices, "subjects": subjects},
+    }
 
 
 @router.post("/migrate-tags")
@@ -132,31 +159,76 @@ def admin_migrate_tags(
     _admin: User = Depends(require_admin),
 ) -> dict:
     """标签系统迁移脚本 — 原 src/app/api/admin/migrate-tags/route.ts.
-    
-    把 error_items 上的 knowledge_points (JSON) 解析成 KnowledgeTag 行.
+
+    把 error_items 上的 knowledge_points (JSON) 解析成 KnowledgeTag 行并建立关联.
+
+    原实现的三个问题:
+      1. KnowledgeTag.subject 是 NOT NULL, 但创建时没给 → 直接 IntegrityError
+      2. 同一个 name 会为每道题重复建一行, 没有去重
+      3. import 了 error_item_tags 却没用 → tag 建出来是孤立的, 没有绑到错题上
     """
     import json
+
     from ...models import KnowledgeTag
 
     items = (
         db.query(ErrorItem)
+        .options(selectinload(ErrorItem.tags))
         .filter(ErrorItem.knowledge_points.isnot(None))
         .all()
     )
-    migrated = 0
+
+    # (subject, name) → tag, 用于去重; 先加载已有 tag 避免重复建
+    tag_index: dict[tuple[str, str], KnowledgeTag] = {}
+    for t in db.query(KnowledgeTag).all():
+        tag_index.setdefault((t.subject, t.name), t)
+
+    DEFAULT_SUBJECT = "other"
+    created = 0
+    linked = 0
+
     for item in items:
         try:
             points = json.loads(item.knowledge_points) if item.knowledge_points else []
-            if isinstance(points, list):
-                for p in points:
-                    name = p if isinstance(p, str) else p.get("name")
-                    if not name:
-                        continue
-                    from ...models.error_item import error_item_tags
-                    tag = KnowledgeTag(name=name, user_id=item.user_id)
-                    db.add(tag)
-                    migrated += 1
-        except Exception:
-            pass
-    db.commit()
-    return {"message": "Migration complete", "migrated_tags": migrated}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(points, list):
+            continue
+
+        for p in points:
+            name = p if isinstance(p, str) else (p.get("name") if isinstance(p, dict) else None)
+            if not name or not name.strip():
+                continue
+            name = name.strip()
+            subject = (item.subject.name if item.subject else None) or DEFAULT_SUBJECT
+
+            tag = tag_index.get((subject, name))
+            if tag is None:
+                tag = KnowledgeTag(
+                    id=_uid(),
+                    name=name,
+                    subject=subject,
+                    is_system=False,
+                    user_id=item.user_id,
+                )
+                db.add(tag)
+                db.flush()
+                tag_index[(subject, name)] = tag
+                created += 1
+
+            if tag not in item.tags:
+                item.tags.append(tag)
+                linked += 1
+
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.error("migrate-tags failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Migration failed")
+
+    return {
+        "message": "Migration complete",
+        "created_tags": created,
+        "linked_relations": linked,
+    }

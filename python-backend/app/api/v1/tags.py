@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ...database import get_db
@@ -168,9 +168,6 @@ def tag_stats(
     subject: str | None = Query(None),
 ) -> list[dict]:
     """按 tag 统计错题数量."""
-    from sqlalchemy import join as sa_join
-    from sqlalchemy import label
-
     stmt = (
         db.query(KnowledgeTag.id, KnowledgeTag.name, KnowledgeTag.subject,
                  func.count(ErrorItem.id).label("count"))
@@ -189,7 +186,3 @@ def tag_stats(
         {"id": r.id, "name": r.name, "subject": r.subject, "count": r.count}
         for r in rows
     ]
-
-
-# 需要引入 or_ 在 suggest_tags 里, 用 importlib 补救下
-from sqlalchemy import or_  # noqa: E402

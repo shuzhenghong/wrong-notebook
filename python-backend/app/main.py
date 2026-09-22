@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api.v1.router import api_router
 from .config import get_settings
-from .database import init_db
+from .database import engine, init_db
+from .utils.health import probe_db
 from .utils.logger import get_logger
 
 
@@ -25,6 +28,22 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     logger.info("Database initialized: %s", settings.database_url)
     yield
     logger.info("Shutting down")
+    engine.dispose()
+
+
+def _build_cors_origins(raw: str) -> tuple[list[str], bool]:
+    """解析 CORS 源配置.
+
+    浏览器在 `Access-Control-Allow-Origin: *` 时会拒绝携带凭证的请求,
+    所以通配符和 credentials=True 不能同时用. 这里显式处理:
+    配了 `*` 就自动关掉 credentials, 避免出现"配了却用不了"的诡异行为.
+    """
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if not origins:
+        return [], False
+    if "*" in origins:
+        return ["*"], False
+    return origins, True
 
 
 def create_app() -> FastAPI:
@@ -37,14 +56,33 @@ def create_app() -> FastAPI:
     )
 
     # CORS
-    origins = [o.strip() for o in settings.cors_origins.split(",")]
+    origins, allow_credentials = _build_cors_origins(settings.cors_origins)
+    if settings.cors_allow_credentials is False:
+        allow_credentials = False
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ---- 统一异常处理 ----
+    @app.exception_handler(RequestValidationError)
+    async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # 422 默认会把整个请求体回显, 可能包含图片 base64 — 只回传字段级错误
+        errors = [
+            {"loc": list(e.get("loc", [])), "msg": e.get("msg", ""), "type": e.get("type", "")}
+            for e in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": "Validation error", "errors": errors})
+
+    @app.exception_handler(Exception)
+    async def _unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
+        """兜底: 记录完整堆栈, 但只给客户端一个不泄漏内部信息的响应."""
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        detail = str(exc) if settings.debug else "Internal server error"
+        return JSONResponse(status_code=500, content={"detail": detail})
 
     # 路由
     app.include_router(api_router)
@@ -58,6 +96,11 @@ def create_app() -> FastAPI:
             "api": "/api/health",
         }
 
+    @app.get("/health")
+    def root_health() -> dict[str, object]:
+        """根级健康检查 — 真正连一次数据库."""
+        return probe_db()
+
     return app
 
 
@@ -67,4 +110,10 @@ app = create_app()
 if __name__ == "__main__":  # pragma: no cover
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=get_settings().debug)
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1" if settings.debug else "0.0.0.0",
+        port=8000,
+        reload=settings.debug,
+    )

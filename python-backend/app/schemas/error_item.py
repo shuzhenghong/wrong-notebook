@@ -9,7 +9,9 @@ from pydantic.alias_generators import to_camel
 
 
 class ErrorItemCreate(BaseModel):
-    original_image_url: str
+    # 原为必填, 但"手动录入文字题"场景下根本没有图片,
+    # 前端只能塞一个空 data URL 绕过去. 改成可选, 缺省空串.
+    original_image_url: str = ""
     subject_id: str | None = None
     image_storage_key: str | None = None
     image_mime_type: str | None = None
@@ -27,6 +29,7 @@ class ErrorItemCreate(BaseModel):
     user_notes: str | None = None
     grade_semester: str | None = None
     paper_level: str | None = None
+    mastery_level: int = Field(default=0, ge=0, le=2)
     tag_ids: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)

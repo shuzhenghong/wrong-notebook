@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 
 from ..config import get_settings
 
@@ -24,8 +25,18 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(pwd_bytes, hashed.encode("utf-8"))
 
 
-def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
-    """生成 JWT access token."""
+def create_access_token(
+    subject: str,
+    token_version: int = 0,
+    expires_delta: timedelta | None = None,
+) -> str:
+    """生成 JWT access token.
+
+    额外写入:
+    - jti: 唯一 ID, 用于登出时进黑名单精确吊销单条 token.
+    - tv:  token_version, 改密后自增即可让该用户所有旧 token 集体失效.
+    两者缺失时 (老 token) 解析端会向后兼容, 不做强制校验.
+    """
     settings = get_settings()
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.jwt_expire_minutes)
@@ -34,6 +45,8 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
         "sub": subject,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
+        "jti": uuid.uuid4().hex,
+        "tv": token_version,
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 

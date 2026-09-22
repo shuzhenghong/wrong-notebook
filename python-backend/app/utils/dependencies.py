@@ -13,7 +13,6 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError
@@ -23,12 +22,16 @@ from ..config import get_settings
 from ..database import get_db
 from ..models import User
 from .auth import decode_access_token, hash_password
+from .token_blacklist import is_revoked, token_version_valid
 
 
 def _trust_forwarded() -> bool:
-    """是否信任 Next.js 内网转发的 X-Forwarded-User header."""
-    import os
-    return os.environ.get("TRUST_X_FORWARDED_USER", "false").lower() == "true"
+    """是否信任 Next.js 内网转发的 X-Forwarded-User header.
+
+    统一走 settings (TRUST_X_FORWARDED_USER), 不再直接读 os.environ,
+    保证和 .env / 其他配置项的优先级一致.
+    """
+    return get_settings().trust_x_forwarded_user
 
 
 def _generate_cuid() -> str:
@@ -105,7 +108,34 @@ def _resolve_from_bearer(request: Request, db: Session) -> User | None:
     user = db.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or disabled")
+
+    # ---- JWT 失效校验 ----
+    # 1) 单点登出: 该 jti 是否在黑名单里
+    jti = payload.get("jti")
+    if is_revoked(jti, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked (logged out)"
+        )
+    # 2) 改密作废: token 的 tv 与用户当前 token_version 不一致即失效
+    if not token_version_valid(payload.get("tv"), user.token_version):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired (credential changed)"
+        )
+
     return user
+
+
+def get_bearer_token(request: Request) -> str:
+    """提取原始 Bearer token (不解析), 供登出等需要 jti 的接口使用."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token"
+        )
+    token = auth.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Empty bearer token")
+    return token
 
 
 def get_current_user(

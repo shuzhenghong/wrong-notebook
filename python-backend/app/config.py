@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 生产环境必须替换掉的默认密钥
+_INSECURE_JWT_SECRET = "change-me-in-production-please-use-a-long-random-string"
 
 
 class Settings(BaseSettings):
@@ -54,12 +58,54 @@ class Settings(BaseSettings):
 
     # ---- CORS ----
     cors_origins: str = "*"
+    cors_allow_credentials: bool = True
 
     # ---- 图片存储 ----
     upload_dir: str = str(BASE_DIR / "uploads")
+
+    # ---- 限流 (多副本部署用 Redis 共享计数) ----
+    redis_url: str = ""  # 留空 = 进程内限流 (单容器足够); 配置则走 Redis
+
+    # ---- 应用级配置 (app-config.json) ----
+    # 之前代码用相对路径 open("app-config.json"), 依赖进程 CWD, 换个目录启动就失效.
+    app_config_file: str = str(BASE_DIR / "app-config.json")
+
+    # ---- 安全 ----
+    # 是否信任 Next.js 内网转发的 X-Forwarded-User header (默认否)
+    trust_x_forwarded_user: bool = False
+
+    @model_validator(mode="after")
+    def _check_production_safety(self) -> "Settings":
+        """debug=False (生产) 时拒绝继续用默认 JWT 密钥."""
+        if not self.debug and self.jwt_secret_key == _INSECURE_JWT_SECRET:
+            raise ValueError(
+                "JWT_SECRET_KEY must be set to a random secret when debug=False. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        return self
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _normalize_origins(cls, v: str) -> str:
+        return v.strip()
 
 
 @lru_cache
 def get_settings() -> Settings:
     """返回单例配置."""
     return Settings()
+
+
+def reload_settings() -> Settings:
+    """清空配置缓存, 重新从环境变量 / .env 读取.
+
+    用于管理员改完 .env 里的 AI key 后, 不必重启整个进程就能让新配置生效
+    (配合 services.ai.factory.reload_ai_service 一起用).
+    """
+    get_settings.cache_clear()
+    return get_settings()
+
+
+def generate_secret_key() -> str:
+    """生成一个可用于 JWT_SECRET_KEY 的随机密钥."""
+    return secrets.token_urlsafe(48)

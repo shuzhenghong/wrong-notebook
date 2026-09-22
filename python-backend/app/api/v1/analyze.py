@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-import time
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,10 +16,26 @@ from ...schemas.ai import AnalyzeRequest, AnalyzeResponse
 from ...services.ai import get_ai_service
 from ...utils.dependencies import get_current_user
 from ...utils.logger import get_logger
+from ...utils.rate_limiter import rate_limit
 
 
 router = APIRouter()
 logger = get_logger("analyze")
+
+# AI 调用昂贵, 需限流 (每用户每分钟 10 次)
+ANALYZE_RATE_LIMIT = 10
+ANALYZE_RATE_WINDOW_SEC = 60
+
+
+def _check_rate_limit(user_id: str) -> None:
+    ok, _remaining, retry_after = rate_limit(
+        f"analyze:{user_id}", ANALYZE_RATE_LIMIT, ANALYZE_RATE_WINDOW_SEC
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Analyze rate limit exceeded. Retry after {int(retry_after)}s.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -35,19 +51,10 @@ async def analyze_image(
     if not payload.image_data_url.startswith("data:image/"):
         raise HTTPException(status_code=400, detail="image_data_url must be a data URL")
 
+    _check_rate_limit(user.id)
     ai = get_ai_service()
 
-    available_tags: list[str] = []
-    if payload.subject:
-        available_tags = [
-            t.name
-            for t in db.query(KnowledgeTag)
-            .filter(KnowledgeTag.subject == payload.subject, KnowledgeTag.is_system.is_(True))
-            .limit(200)
-            .all()
-        ]
-
-    logger.info("Analyzing image via %s, subject=%s, tags=%d", ai.name, payload.subject, len(available_tags))
+    logger.info("Analyzing image via %s, subject=%s", ai.name, payload.subject)
 
     question = await ai.analyze_image(
         image_data_url=payload.image_data_url,
@@ -90,6 +97,8 @@ async def analyze_image_stream(
     if not payload.image_data_url.startswith("data:image/"):
         raise HTTPException(status_code=400, detail="image_data_url must be a data URL")
 
+    _check_rate_limit(user.id)
+
     async def generator() -> AsyncGenerator[str, None]:
         # 1) 连接已建立
         yield _sse("status", json.dumps({"stage": "connecting"}))
@@ -125,7 +134,9 @@ async def analyze_image_stream(
         paragraphs = [p for p in full_md.split("\n\n") if p.strip()]
         for para in paragraphs:
             yield _sse("delta", json.dumps({"text": para + "\n\n"}))
-            time.sleep(0.05)  # 50ms 延迟, 够快但有流式感
+            # 必须用 asyncio.sleep: 在 async generator 里调 time.sleep 会阻塞
+            # 整个事件循环, SSE 期间其他所有请求都会被卡死.
+            await asyncio.sleep(0.05)
 
         # 4) done + 完整 JSON 结构 (给前端存库用)
         yield _sse("status", json.dumps({"stage": "done"}))
