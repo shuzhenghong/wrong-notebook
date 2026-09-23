@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import re
 from pathlib import Path
 
@@ -139,10 +138,10 @@ def read_image(storage_key: str) -> tuple[bytes, str] | None:
     if not storage_key or ".." in storage_key or storage_key.startswith("/") or "\\" in storage_key:
         return None
 
-    target = (get_images_root() / storage_key).resolve()
-    # 确保仍在 images_root 下 (防 symlink 逃逸)
     root = get_images_root().resolve()
-    if not str(target).startswith(str(root) + os.sep) and target != root:
+    target = (root / storage_key).resolve()
+    # 确保仍在 images_root 下 (防 symlink 逃逸 / 前缀混淆)
+    if target != root and not target.is_relative_to(root):
         return None
 
     try:

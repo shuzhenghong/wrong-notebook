@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,16 +10,13 @@ from sqlalchemy.orm import Session, selectinload
 from ...database import get_db
 from ...models import ErrorItem, KnowledgeTag, Subject, User
 from ...utils.dependencies import get_current_user
+from ...utils.ids import new_id
 from ...utils.logger import get_logger
 from ...utils.timeutil import utc_now
 
 
 router = APIRouter()
 logger = get_logger("import-export")
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 # =====================================================================
@@ -55,7 +51,7 @@ def import_data(
                 imported["skipped"] += 1
                 continue
         db.add(Subject(
-            id=sid or _uid(),
+            id=sid or new_id(),
             user_id=user.id,
             name=s.get("name", "(imported)"),
         ))
@@ -82,7 +78,7 @@ def import_data(
             continue
         try:
             db.add(ErrorItem(
-                id=eid or _uid(),
+                id=eid or new_id(),
                 user_id=user.id,
                 subject_id=subject_id,
                 question_text=e.get("questionText") or e.get("ocrText"),

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -12,13 +10,10 @@ from ...database import get_db
 from ...models import ErrorItem, KnowledgeTag, User
 from ...schemas.notebook import KnowledgeTagCreate, KnowledgeTagOut, KnowledgeTagUpdate
 from ...utils.dependencies import get_current_user
+from ...utils.ids import new_id
 
 
 router = APIRouter()
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 def _build_tree(nodes: list[KnowledgeTag], parent_id: str | None = None) -> list[KnowledgeTagOut]:
@@ -79,7 +74,7 @@ def create_tag(
             raise HTTPException(status_code=400, detail="parent_id not found")
 
     tag = KnowledgeTag(
-        id=_uid(),
+        id=new_id(),
         name=payload.name,
         subject=payload.subject,
         parent_id=payload.parent_id,

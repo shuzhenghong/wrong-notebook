@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -14,6 +12,7 @@ from ...models import ErrorItem, PracticeRecord, User
 from ...schemas.ai import MessageResponse, PracticeGenerateRequest, PracticeQuestion
 from ...services.ai import get_ai_service
 from ...utils.dependencies import get_current_user
+from ...utils.ids import new_id
 from ...utils.logger import get_logger
 from ...utils.rate_limiter import rate_limit
 
@@ -24,10 +23,6 @@ logger = get_logger("practice")
 # 生成练习要调大模型, 需限流 (每用户每分钟 15 次)
 GENERATE_RATE_LIMIT = 15
 GENERATE_RATE_WINDOW_SEC = 60
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 # ---------- 生成练习 (干扰项) ----------
@@ -102,7 +97,7 @@ def record_practice(
             raise HTTPException(status_code=404, detail="ErrorItem not found")
 
     rec = PracticeRecord(
-        id=_uid(),
+        id=new_id(),
         user_id=user.id,
         error_item_id=payload.error_item_id,
         subject=payload.subject,

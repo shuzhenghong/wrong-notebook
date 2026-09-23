@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -18,6 +16,7 @@ from ...schemas.error_item import (
     ErrorItemUpdate,
 )
 from ...utils.dependencies import get_current_user
+from ...utils.ids import new_id
 from ...utils.image_storage import (
     delete_image,
     is_inline_image,
@@ -26,10 +25,6 @@ from ...utils.image_storage import (
 
 
 router = APIRouter()
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 def _maybe_store_image(user_id: str, item_id: str, original_image_url: str | None) -> tuple[str | None, str | None, str | None]:
@@ -154,7 +149,7 @@ def create_error_item(
         if not s or s.user_id != user.id:
             raise HTTPException(status_code=400, detail="Invalid subject_id")
 
-    item_id = _uid()
+    item_id = new_id()
     # 若前端只传了 inline base64 originalImageUrl, 自动落盘
     auto_key, auto_mime, auto_url = _maybe_store_image(user.id, item_id, payload.original_image_url)
 

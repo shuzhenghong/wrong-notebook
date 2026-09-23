@@ -22,6 +22,9 @@ import { getToken } from "next-auth/jwt";
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger("proxy");
 
 export const runtime = "nodejs";
 
@@ -206,8 +209,10 @@ async function proxy(
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    // 安全: 不向前端回显 backendUrl（可能含内网地址/端口/查询串），只打日志。
+    logger.error({ detail: msg, backendUrl }, 'Proxy upstream error');
     return NextResponse.json(
-      { error: "Proxy error", detail: msg, backendUrl },
+      { error: "Proxy error", detail: "Upstream service unavailable" },
       { status: 502 },
     );
   }

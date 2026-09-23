@@ -22,6 +22,7 @@ from ..config import get_settings
 from ..database import get_db
 from ..models import User
 from .auth import decode_access_token, hash_password
+from .ids import new_id
 from .token_blacklist import is_revoked, token_version_valid
 
 
@@ -32,11 +33,6 @@ def _trust_forwarded() -> bool:
     保证和 .env / 其他配置项的优先级一致.
     """
     return get_settings().trust_x_forwarded_user
-
-
-def _generate_cuid() -> str:
-    """和原有 cuid 风格一致的短 id."""
-    return secrets.token_hex(16)
 
 
 def _resolve_from_forwarded_user(request: Request, db: Session) -> User | None:
@@ -70,7 +66,7 @@ def _resolve_from_forwarded_user(request: Request, db: Session) -> User | None:
 
     # Lazy mirror: 自动创建一个镜像用户, 密码是临时的 (Next.js 那边管认证)
     user = User(
-        id=_generate_cuid(),
+        id=new_id(),
         email=email,
         password=hash_password("mirror-" + secrets.token_urlsafe(24)),
         name=None,

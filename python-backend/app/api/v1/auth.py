@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import secrets
 from datetime import timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from ...config import get_settings
@@ -23,6 +23,7 @@ from ...schemas.user import (
 from ...utils.app_config import allow_registration, read_masked_config, write_config
 from ...utils.auth import create_access_token, hash_password, verify_password
 from ...utils.dependencies import get_bearer_token, get_current_user, require_admin
+from ...utils.ids import new_id
 from ...utils.logger import get_logger
 from ...utils.rate_limiter import rate_limit
 from ...config import reload_settings
@@ -37,11 +38,6 @@ LOGIN_RATE_LIMIT = 10
 LOGIN_RATE_WINDOW_SEC = 60
 REGISTER_RATE_LIMIT = 5
 REGISTER_RATE_WINDOW_SEC = 3600
-
-
-def _uid() -> str:
-    """生成 cuid 风格的短 id (足够 sqlite 用)."""
-    return secrets.token_hex(16)
 
 
 def _client_key(request: Request) -> str:
@@ -76,7 +72,7 @@ def register(
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(
-        id=_uid(),
+        id=new_id(),
         email=payload.email,
         password=hash_password(payload.password),
         name=payload.name,
@@ -213,10 +209,38 @@ def user_nextjs_compat_patch(
 # /api/settings — 用户配置 (不在 auth_router 挂载, 直接在 api_router 层)
 # =====================================================================
 
+_SECRET_KEY_HINTS = ("key", "secret", "token", "password", "endpoint", "baseurl", "apikey")
+
+
+def _is_secret_key(key: str) -> bool:
+    low = key.lower().replace("_", "").replace("-", "")
+    return any(hint in low for hint in _SECRET_KEY_HINTS)
+
+
 class SettingsUpdate(BaseModel):
-    """配置更新体 — 只接受 dict, 具体字段由 app-config.json 自己定义."""
+    """配置更新体 — 允许任意字段, 但密钥类字段必须是字符串.
+
+    app-config.json 是开放结构 (由前端定义字段), 所以保留 extra=allow;
+    但密钥/连接串类字段若被误传为数字/对象, 下游 provider 会静默失败,
+    这里提前拦截.
+    """
 
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_secret_types(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for k, v in data.items():
+            if v is None:
+                continue
+            if _is_secret_key(str(k)) and not isinstance(v, str):
+                raise ValueError(
+                    f"Field '{k}' looks like a secret/credential and must be a string, "
+                    f"got {type(v).__name__}"
+                )
+        return data
 
 
 @router.get("/settings")

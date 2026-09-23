@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -14,15 +12,12 @@ from ...models import ErrorItem, PracticeRecord, Subject, User
 from ...schemas.user import UserOut
 from ...utils.auth import hash_password
 from ...utils.dependencies import require_admin
+from ...utils.ids import new_id
 from ...utils.logger import get_logger
 
 
 router = APIRouter()
 logger = get_logger("api:admin")
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 class SystemResetRequest(BaseModel):
@@ -74,7 +69,7 @@ def create_user(
         raise HTTPException(status_code=400, detail="Email exists")
 
     u = User(
-        id=_uid(),
+        id=new_id(),
         email=email,
         password=hash_password(password),
         name=payload.get("name"),
@@ -205,7 +200,7 @@ def admin_migrate_tags(
             tag = tag_index.get((subject, name))
             if tag is None:
                 tag = KnowledgeTag(
-                    id=_uid(),
+                    id=new_id(),
                     name=name,
                     subject=subject,
                     is_system=False,

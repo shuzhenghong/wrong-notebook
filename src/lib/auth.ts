@@ -26,9 +26,13 @@ export const authOptions: NextAuthOptions = {
                 httpOnly: true,
                 sameSite: "lax",
                 path: "/",
-                // Only use secure cookies if explicitly running on HTTPS (via NEXTAUTH_URL)
-                // This enables HTTP local IP access in Docker/Production if NEXTAUTH_URL is unset
-                secure: process.env.NODE_ENV === "production" && process.env.NEXTAUTH_URL?.startsWith("https"),
+                // 生产环境默认启用 Secure。只有显式配置了 http:// 的 NEXTAUTH_URL 时才降级，
+                // 避免未配置 NEXTAUTH_URL 时 session cookie 以明文随 HTTP 发送被中间人劫持。
+                secure:
+                    process.env.NODE_ENV === "production" &&
+                    (process.env.NEXTAUTH_URL
+                        ? process.env.NEXTAUTH_URL.startsWith("https")
+                        : true),
             },
         },
     },

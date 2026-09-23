@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,13 +10,10 @@ from ...database import get_db
 from ...models import ErrorItem, Subject, User
 from ...schemas.notebook import SubjectCreate, SubjectOut, SubjectUpdate
 from ...utils.dependencies import get_current_user
+from ...utils.ids import new_id
 
 
 router = APIRouter()
-
-
-def _uid() -> str:
-    return secrets.token_hex(16)
 
 
 # ---------- 列表 ----------
@@ -59,7 +54,7 @@ def create_notebook(
     if existing:
         raise HTTPException(status_code=400, detail="Notebook name already exists")
 
-    s = Subject(id=_uid(), name=payload.name, user_id=user.id)
+    s = Subject(id=new_id(), name=payload.name, user_id=user.id)
     db.add(s)
     db.commit()
     db.refresh(s)
