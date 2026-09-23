@@ -1,3 +1,5 @@
+version: "2.4"
+
 services:
   # ─────────────────────────────────────────────────────────────
   # Python 后端（FastAPI）—— 业务与 AI 能力都在这里
@@ -16,7 +18,7 @@ services:
     environment:
       # 生产模式：debug=false 会强制校验 JWT_SECRET_KEY 不是默认值
       - DEBUG=false
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?请在 .env 中设置 JWT_SECRET_KEY（openssl rand -base64 48）}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY in .env file}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-10080}
       - DATABASE_URL=sqlite:////app/data/wrong_notebook.db
       - UPLOAD_DIR=/app/data/uploads
