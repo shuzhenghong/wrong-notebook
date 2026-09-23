@@ -7,6 +7,8 @@ on:
       - 'v*'
   pull_request:
     branches: [main]
+  # 手动触发 —— 用于在非 main 分支上按需跑一次流水线（例如验证 CI 自身的改动）
+  workflow_dispatch:
 
 jobs:
   # ============================================
@@ -63,14 +65,44 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+  # ============================================
+  # 后端契约/单元测试（python-backend/tests）
+  # 原先的 integration 用例随业务下沉到 Python 后无法再在前端仓库运行，
+  # 由这个 job 承接：跑的是真实 ASGI 应用 + 真实依赖链，只把 AI/OCR 打桩。
+  # ============================================
+  backend-test:
+    needs: static-check
+    runs-on: ubuntu-latest
+    name: Backend Contract Tests
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'python-backend/requirements*.txt'
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python-backend/requirements-dev.txt
+
+      - name: Run backend tests
+        working-directory: python-backend
+        run: python -m pytest tests -q
+
   # 注：集成测试随渐进迁移一并移出前端。原先的 integration 用例全部 import
   # Next.js 的 route handler，而这些业务路由已经下沉到 Python 后端，用例无法再
-  # 在本仓库运行；对应覆盖应由 python-backend 的 pytest 承担。
+  # 在本仓库运行；对应覆盖由上面的 backend-test（pytest）承担。
   # 这里保留 job 位是为了将来恢复集成测试时不必重写流水线。
   build-check:
     runs-on: ubuntu-latest
     name: Build Check
-    needs: unit-test
+    needs: [unit-test, backend-test]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -95,6 +127,9 @@ jobs:
     name: E2E Tests
     needs: build-check
     timeout-minutes: 60
+    # 手动 dispatch 只用于快速验证流水线/单测，跳过重量级 e2e；
+    # 正常 push/PR 到 main 时照常运行。
+    if: github.event_name != 'workflow_dispatch'
     env:
       DATABASE_URL: "file:./e2e.db"
       NEXTAUTH_SECRET: "ci-secret-value-123456"
