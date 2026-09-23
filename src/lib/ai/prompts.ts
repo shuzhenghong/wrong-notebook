@@ -155,7 +155,16 @@ export const DEFAULT_ANALYZE_TEMPLATE = `你是跨学科考试分析专家。请
 【输出格式约束】
 - **必须**使用以下 10 个 XML 标签，**不要额外输出**开场白/结束语/JSON/Markdown code block
 - LaTeX 公式直接写标准符号（如 $\frac{1}{2}$），**不要转义反斜杠**
-- 表格用 Markdown 表格语法；复杂表格可加一行注释说明结构
+
+【表格处理规则】
+- 所有表格必须使用标准 Markdown 表格语法
+- 标准表格示例：
+| 列标题1 | 列标题2 | 列标题3 |
+|---------|---------|---------|
+| 内容1   | 内容2   | 内容3   |
+- 复杂表格处理：遇到合并单元格、多级表头时，需在表格后单独用文字说明结构（如"第2行第1-2列合并"）
+- 表格完整性要求：必须转录所有单元格内容，保留表格标题、单位、注释
+- 特殊情况处理：手写表格、模糊表格尽量辨认，无法辨认的单元格标注"[模糊]"
 
 请按以下结构输出：
 
@@ -169,15 +178,15 @@ export const DEFAULT_ANALYZE_TEMPLATE = `你是跨学科考试分析专家。请
 
 <wrong_answer_text>图片中学生已写出的错误解答/步骤/草稿，没有则留空</wrong_answer_text>
 
-<mistake_status>wrong_attempt|not_attempted|unknown（根据图片中学生作答痕迹判断）</mistake_status>
+<mistake_status>wrong_attempt|not_attempted|unknown（根据图片中可见作答痕迹判断）</mistake_status>
 
 <mistake_analysis>错误解答的步骤分析与错因，没有错误解答则留空</mistake_analysis>
 
-<question_text>题目完整文本。Markdown 格式，公式用 LaTeX（行内 $...$，块级 $$...$$）；含子问题请完整列出；表格完整转录。</question_text>
+<question_text>题目完整文本。Markdown 格式，公式用 LaTeX（行内 $...$，块级 $$...$$）；含子问题请完整列出；表格按【表格处理规则】完整转录。</question_text>
 
-<answer_text>正确答案，Markdown + LaTeX 格式</answer_text>
+<answer_text>正确答案，Markdown + LaTeX 格式；若答案含表格，按【表格处理规则】输出</answer_text>
 
-<analysis>详细步骤解析，简体中文，公式用标准 LaTeX 不转义反斜杠</analysis>
+<analysis>详细步骤解析，简体中文，公式用标准 LaTeX 不转义反斜杠；若解析含表格，按【表格处理规则】输出</analysis>
 
 {{knowledge_points_list}}
 - 标签精准匹配，每题最多 5 个
@@ -433,7 +442,7 @@ export const DEFAULT_REANSWER_TEMPLATE = `你是专业教师。以下是校正�
 
 <mistake_status>wrong_attempt|not_attempted|unknown（依据图片中实际可见作答痕迹，不要猜测）</mistake_status>
 
-<mistake_analysis>基于校正后题目和可见作答痕迹分析错因，看不到则留空</mistake_analysis>
+<mistake_analysis>请重新判断：基于校正后题目和可见作答痕迹分析错因，看不到则留空</mistake_analysis>
 
 {{grade_instruction}}
 {{provider_hints}}`;
