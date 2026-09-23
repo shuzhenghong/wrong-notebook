@@ -93,3 +93,4 @@ python-backend/wrong_notebook.db
 python-backend/uploads/
 *.egg-info/
 .venv/
+images/
