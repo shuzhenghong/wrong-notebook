@@ -69,9 +69,11 @@ jobs:
   # 后端契约/单元测试（python-backend/tests）
   # 原先的 integration 用例随业务下沉到 Python 后无法再在前端仓库运行，
   # 由这个 job 承接：跑的是真实 ASGI 应用 + 真实依赖链，只把 AI/OCR 打桩。
+  #
+  # 刻意不依赖 static-check：后端测试与前端的 ESLint 状态无关，
+  # 挂在前端 lint 后面只会让"前端 lint 一红、后端有没有问题也不知道"。
   # ============================================
   backend-test:
-    needs: static-check
     runs-on: ubuntu-latest
     name: Backend Contract Tests
     if: "!startsWith(github.ref, 'refs/tags/')"
