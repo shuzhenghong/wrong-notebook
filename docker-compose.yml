@@ -28,10 +28,20 @@ services:
       # AI（可选，留空则关闭 AI 讲解功能）
       - AI_PROVIDER=${AI_PROVIDER:-gemini}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - GOOGLE_MODEL=${GOOGLE_MODEL:-gemini-1.5-flash}
+      - GOOGLE_MODEL=${GOOGLE_MODEL:-gemini-2.5-flash}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      # ── AI 成本控制（详见 python-backend/.env.example）──
+      # OCR 文本直通：有本地 OCR 文字就别再发图片，图片 token 归零
+      - AI_OCR_TEXT_MODE=${AI_OCR_TEXT_MODE:-auto}
+      - AI_OCR_TEXT_MIN_CHARS=${AI_OCR_TEXT_MIN_CHARS:-80}
+      # Gemini 2.5 思考链预算：0 = 关闭（结构化抽取不需要推理链）
+      - GEMINI_THINKING_BUDGET=${GEMINI_THINKING_BUDGET:-0}
+      # 分析结果缓存：重复请求零 token
+      - AI_CACHE_ENABLED=${AI_CACHE_ENABLED:-true}
+      - AI_CACHE_TTL_SEC=${AI_CACHE_TTL_SEC:-900}
+      - AI_CACHE_MAX_ENTRIES=${AI_CACHE_MAX_ENTRIES:-256}
     volumes:
       - ./data/backend:/app/data
     healthcheck:

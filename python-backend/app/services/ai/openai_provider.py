@@ -18,10 +18,11 @@ from .parser import (
     split_csv,
 )
 from .prompts import (
-    ANALYZE_SYSTEM_PROMPT,
     PRACTICE_SYSTEM_PROMPT,
+    build_analyze_system_prompt,
     build_analyze_user_prompt,
     build_practice_user_prompt,
+    subject_supports_geogebra,
 )
 
 
@@ -44,18 +45,28 @@ class OpenAICompatibleService(AIService):
         subject: str | None = None,
         grade_semester: str | None = None,
         custom_prompt: str | None = None,
+        ocr_text: str | None = None,
     ) -> AnalyzedQuestion:
-        user_prompt = build_analyze_user_prompt(subject, grade_semester, None, custom_prompt)
+        text_mode = bool(ocr_text)
+        system = build_analyze_system_prompt(
+            include_geogebra=subject_supports_geogebra(subject),
+            text_only=text_mode,
+        )
+        user_prompt = build_analyze_user_prompt(
+            subject, grade_semester, None, custom_prompt, ocr_text
+        )
+
+        # 纯文本直通: 用字符串 content (不构造 image_url 分块) → 图片 token 归零
+        user_content: Any = user_prompt
+        if not text_mode:
+            user_content = [
+                {"type": "text", "text": user_prompt},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_prompt},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ],
-            },
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
         ]
 
         resp = await self._client.chat.completions.create(

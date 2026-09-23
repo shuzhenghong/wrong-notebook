@@ -1,15 +1,32 @@
 /**
+ * 图片处理 —— 面向"传给多模态模型"的场景优化。
+ *
+ * 成本要点: 多模态模型按图片像素切块计费（token 数随分辨率线性增长）。
+ * 之前只在文件 > 1MB 时才压缩，结果一张 900KB 的 4000px 手机照片会原样上传，
+ * 分辨率带来的 token 成本远高于文件体积本身。现在改为**按宽度无条件降采样**：
+ * 只要宽度超过上限就重绘，与文件大小无关。
+ *
+ * 1600px 是保守取值：试卷题目通常是 A4 幅面文本，1600px 宽足以让模型看清
+ * 公式与手写，再往上加分辨率对识别准确率几乎没有增益，却成倍增加 token。
+ */
+
+/** 传给模型的图片宽度上限（px） */
+export const AI_IMAGE_MAX_WIDTH = 1600;
+/** 超过该体积则继续降低 JPEG 质量 */
+export const AI_IMAGE_MAX_MB = 1;
+
+/**
  * 压缩图片文件
  * @param file 原始图片文件
  * @param maxSizeMB 最大文件大小（MB），默认 1MB
- * @param maxWidth 最大宽度，默认 1920px
+ * @param maxWidth 最大宽度，默认 1600px
  * @param quality 压缩质量 0-1，默认 0.8
  * @returns 压缩后的 Base64 字符串
  */
 export async function compressImage(
     file: File,
-    maxSizeMB: number = 1,
-    maxWidth: number = 1920,
+    maxSizeMB: number = AI_IMAGE_MAX_MB,
+    maxWidth: number = AI_IMAGE_MAX_WIDTH,
     quality: number = 0.8
 ): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -59,7 +76,10 @@ export async function compressImage(
                     if (newSize <= maxSizeMB) break;
                 }
 
-                console.log(`原始文件: ${(file.size / 1024 / 1024).toFixed(2)}MB, 压缩后: ${((compressed.length * 3) / 4 / 1024 / 1024).toFixed(2)}MB`);
+                console.log(
+                    `原始: ${img.width}x${img.height} ${(file.size / 1024 / 1024).toFixed(2)}MB` +
+                    ` → 输出: ${width}x${height} ${((compressed.length * 3) / 4 / 1024 / 1024).toFixed(2)}MB`
+                );
 
                 resolve(compressed);
             };
@@ -70,6 +90,26 @@ export async function compressImage(
 
         reader.onerror = () => reject(new Error('文件读取失败'));
         reader.readAsDataURL(file);
+    });
+}
+
+/** 读取文件为 data URL */
+function readAsDataURL(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+/** 读取图片的原始像素尺寸 */
+function getImageSize(dataUrl: string): Promise<{ width: number; height: number }> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.width, height: img.height });
+        img.onerror = () => reject(new Error('图片加载失败'));
+        img.src = dataUrl;
     });
 }
 
@@ -84,26 +124,33 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 
 /**
  * 检查并压缩图片（如果需要）
+ *
+ * 触发条件（任一满足即重绘）:
+ *   - 宽度超过 AI_IMAGE_MAX_WIDTH（降分辨率 = 直接省 token）
+ *   - 文件超过 1MB（降质量 = 省带宽）
+ * 都不满足时原样返回，避免无谓的 canvas 重绘带来的画质损失。
+ *
  * @param file 图片文件
  * @returns Base64 字符串
  */
 export async function processImageFile(file: File): Promise<string> {
     const fileSizeMB = file.size / 1024 / 1024;
-    const threshold = 1; // 1MB 阈值
+    const dataUrl = await readAsDataURL(file);
 
-    console.log(`文件大小: ${fileSizeMB.toFixed(2)}MB`);
-
-    if (fileSizeMB > threshold) {
-        console.log('文件超过阈值，开始压缩...');
-        return await compressImage(file, threshold);
-    } else {
-        console.log('文件大小合适，无需压缩');
-        // 直接返回 Base64
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
+    let tooWide = false;
+    try {
+        const { width } = await getImageSize(dataUrl);
+        tooWide = width > AI_IMAGE_MAX_WIDTH;
+    } catch {
+        // 尺寸读不出来（异常格式）就走压缩分支兜底
+        tooWide = fileSizeMB > AI_IMAGE_MAX_MB;
     }
+
+    if (tooWide || fileSizeMB > AI_IMAGE_MAX_MB) {
+        console.log(`需要压缩（宽度超限: ${tooWide}, 体积 ${fileSizeMB.toFixed(2)}MB）`);
+        return await compressImage(file, AI_IMAGE_MAX_MB, AI_IMAGE_MAX_WIDTH);
+    }
+
+    console.log(`尺寸与体积均在阈值内（${fileSizeMB.toFixed(2)}MB），原样上传`);
+    return dataUrl;
 }

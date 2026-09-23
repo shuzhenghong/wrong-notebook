@@ -9,11 +9,18 @@ from ...schemas.ai import AnalyzedQuestion, PracticeQuestion
 from .base import AIService
 from .openai_provider import _parse_analyze, _parse_practice
 from .prompts import (
-    ANALYZE_SYSTEM_PROMPT,
     PRACTICE_SYSTEM_PROMPT,
+    build_analyze_system_prompt,
     build_analyze_user_prompt,
     build_practice_user_prompt,
+    subject_supports_geogebra,
 )
+
+
+def _supports_thinking(model: str) -> bool:
+    """Gemini 2.5+ 才支持 thinkingConfig; 1.5 系列传了会报错, 必须跳过."""
+    m = (model or "").lower()
+    return "2.5" in m or "3." in m or m.endswith("-3-pro") or "gemini-3" in m
 
 
 class GeminiService(AIService):
@@ -44,12 +51,21 @@ class GeminiService(AIService):
         subject: str | None = None,
         grade_semester: str | None = None,
         custom_prompt: str | None = None,
+        ocr_text: str | None = None,
     ) -> AnalyzedQuestion:
-        user_prompt = build_analyze_user_prompt(subject, grade_semester, None, custom_prompt)
+        # 纯文本直通: 有 OCR 文字就不再发图, 图片 token 归零
+        text_mode = bool(ocr_text)
+        system = build_analyze_system_prompt(
+            include_geogebra=subject_supports_geogebra(subject),
+            text_only=text_mode,
+        )
+        user_prompt = build_analyze_user_prompt(
+            subject, grade_semester, None, custom_prompt, ocr_text
+        )
         raw = await self._call(
-            system=ANALYZE_SYSTEM_PROMPT,
+            system=system,
             user_text=user_prompt,
-            image_data_url=image_data_url,
+            image_data_url=None if text_mode else image_data_url,
             max_tokens=2048,
             temperature=0.2,
         )
@@ -167,13 +183,18 @@ class GeminiService(AIService):
             mime = meta.removeprefix("data:").removesuffix(";base64")
             parts.append({"inline_data": {"mime_type": mime, "data": b64}})
 
+        generation_config: dict[str, Any] = {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        }
+        budget = get_settings().gemini_thinking_budget
+        if budget is not None and budget >= 0 and _supports_thinking(self._model):
+            generation_config["thinkingConfig"] = {"thinkingBudget": budget}
+
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            },
+            "generationConfig": generation_config,
         }
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(url, json=payload)

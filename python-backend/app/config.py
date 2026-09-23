@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     ai_provider: Literal["gemini", "openai", "azure"] = "gemini"
 
     google_api_key: str = ""
-    google_model: str = "gemini-1.5-flash"
+    # gemini-1.5-* 已被 Google 下线, 默认改用 2.5 Flash (也才支持思考链预算控制)
+    google_model: str = "gemini-2.5-flash"
 
     openai_api_key: str = ""
     openai_base_url: str = ""
@@ -55,6 +56,26 @@ class Settings(BaseSettings):
     azure_openai_api_key: str = ""
     azure_openai_endpoint: str = ""
     azure_openai_deployment: str = ""
+
+    # ---- AI 成本控制 (只省钱, 不降能力) ----
+    # OCR 文本直通: 前端本地 OCR 已给出题目文字时, 直接让 AI 读文字,
+    # 不再把图片交给多模态模型 —— 图片 token 归零 (通常占输入成本的 60%~80%).
+    #   off   始终走多模态 (最保守)
+    #   auto  仅当 ocrText 长度 >= ai_ocr_text_min_chars 时走纯文本 (默认)
+    #   force 只要有 ocrText 就走纯文本
+    ai_ocr_text_mode: Literal["off", "auto", "force"] = "auto"
+    ai_ocr_text_min_chars: int = 80
+
+    # Gemini 2.5+ 思考链预算. Gemini 2.5 默认开启动态思考,
+    # 思考 token 按输出计费 —— 本任务是"结构化抽取", 不需要推理链,
+    # 置 0 可省下大量输出 token 并显著提速. 不支持该参数的模型会自动跳过.
+    gemini_thinking_budget: int = 0
+
+    # 分析结果缓存: 同一张图 / 同一段文字 + 同参数 → 直接复用, 零 token.
+    # 覆盖用户重试、双击、同一张图换个笔记本再传等重复场景.
+    ai_cache_enabled: bool = True
+    ai_cache_ttl_sec: int = 900
+    ai_cache_max_entries: int = 256
 
     # ---- CORS ----
     cors_origins: str = "*"

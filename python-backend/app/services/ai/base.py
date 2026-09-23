@@ -22,8 +22,14 @@ class AIService(ABC):
         subject: str | None = None,
         grade_semester: str | None = None,
         custom_prompt: str | None = None,
+        ocr_text: str | None = None,
     ) -> AnalyzedQuestion:
-        """分析一张题目图片, 返回结构化结果."""
+        """分析一张题目图片, 返回结构化结果.
+
+        传了 ocr_text 时走"纯文本直通"模式: 直接读题文字, 不再把图片传给模型,
+        图片 token 归零 (调用方会自行决定是否值得这么做, 见 config.ai_ocr_text_mode).
+        image_data_url 在纯文本模式下可以为空串.
+        """
 
     @abstractmethod
     async def generate_practice(
