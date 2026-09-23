@@ -82,16 +82,18 @@ export default function TagsPage() {
     // 获取自定义标签
     const fetchCustomTags = useCallback(async () => {
         try {
-            // 获取所有学科的扁平标签，过滤非系统标签
-            const allCustom: Array<{ id: string; name: string; subject: string; parentName?: string }> = [];
-            for (const { key } of SUBJECTS) {
-                const data = await apiClient.get<{ tags: Array<{ id: string; name: string; isSystem: boolean; parentName?: string }> }>(
-                    `/api/tags?subject=${key}&flat=true`
-                );
-                const custom = data.tags.filter(t => !t.isSystem).map(t => ({ ...t, subject: key }));
-                allCustom.push(...custom);
-            }
-            setCustomTags(allCustom);
+            // 并行获取所有学科的扁平标签，过滤非系统标签
+            const results = await Promise.all(
+                SUBJECTS.map(async ({ key }) => {
+                    const data = await apiClient.get<{ tags: Array<{ id: string; name: string; isSystem: boolean; parentName?: string }> }>(
+                        `/api/tags?subject=${key}&flat=true`
+                    );
+                    return data.tags
+                        .filter(t => !t.isSystem)
+                        .map(t => ({ ...t, subject: key }));
+                })
+            );
+            setCustomTags(results.flat());
         } catch (error) {
             console.error("Failed to fetch custom tags:", error);
         }
@@ -273,10 +275,20 @@ export default function TagsPage() {
                     return (
                         <Card key={key} className="mb-4">
                             <CardHeader
-                                className="cursor-pointer hover:bg-muted/50 transition-colors flex flex-row items-center justify-between py-4"
+                                role="button"
+                                tabIndex={0}
+                                aria-expanded={isExpanded}
+                                className="cursor-pointer hover:bg-muted/50 transition-colors flex flex-row items-center justify-between py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg"
                                 onClick={() => {
                                     toggleNode(`subject-${key}`);
                                     if (tags === null) fetchTags(key);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        toggleNode(`subject-${key}`);
+                                        if (tags === null) fetchTags(key);
+                                    }
                                 }}
                             >
                                 <CardTitle className="text-lg flex items-center gap-2">
