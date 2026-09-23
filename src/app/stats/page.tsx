@@ -1,13 +1,34 @@
 "use client";
 
 import { useLanguage } from "@/contexts/LanguageContext";
-import { WrongAnswerStats } from "@/components/wrong-answer-stats";
-import { PracticeStats } from "@/components/practice-stats";
+import dynamic from "next/dynamic";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { BackButton } from "@/components/ui/back-button";
 import { BarChart3, TrendingUp, Activity, House } from "lucide-react";
 import Link from "next/link";
+
+// recharts 体积较大（~150KB gzip 前），且只有切到对应 tab 才可见，
+// 动态加载把它从 /stats 首屏 bundle 中移除。
+const ChartSkeleton = () => (
+    <div className="space-y-4 animate-pulse" aria-busy="true" aria-label="Loading charts">
+        <div className="h-6 w-48 bg-muted rounded" />
+        <div className="h-72 bg-muted rounded" />
+        <div className="grid grid-cols-2 gap-4">
+            <div className="h-24 bg-muted rounded" />
+            <div className="h-24 bg-muted rounded" />
+        </div>
+    </div>
+);
+
+const WrongAnswerStats = dynamic(
+    () => import("@/components/wrong-answer-stats").then((m) => m.WrongAnswerStats),
+    { loading: ChartSkeleton, ssr: false }
+);
+const PracticeStats = dynamic(
+    () => import("@/components/practice-stats").then((m) => m.PracticeStats),
+    { loading: ChartSkeleton, ssr: false }
+);
 
 export default function StatsPage() {
     const { t, language } = useLanguage();

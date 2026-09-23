@@ -12,7 +12,7 @@ import { apiClient } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig, OcrTextResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { processImageFile } from "@/lib/image-utils";
+import { processImageFile, dataUrlToBlob } from "@/lib/image-utils";
 import { Upload, BookOpen, Tags, LogOut, BarChart3, PenLine } from "lucide-react";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { BroadcastNotification } from "@/components/broadcast-notification";
@@ -148,9 +148,10 @@ function HomeContent() {
             const base64Image = await processImageFile(file);
 
             setAnalysisStep('analyzing');
-            const data = await apiClient.post<OcrTextResponse>("/api/ocr", {
-                imageBase64: base64Image,
-            }, { timeout: 60000 });
+            // multipart 上传：图片以二进制发送，省去 base64 JSON 的 33% 体积膨胀
+            const form = new FormData();
+            form.append("image", new File([await dataUrlToBlob(base64Image)], "ocr-image.jpg", { type: "image/jpeg" }));
+            const data = await apiClient.post<OcrTextResponse>("/api/ocr", form, { timeout: 60000 });
 
             if (!data || typeof data.text !== 'string' || !data.text.trim()) {
                 frontendLogger.warn('[HomeOcr]', 'OCR returned no text');
@@ -197,18 +198,20 @@ function HomeContent() {
             setAnalysisStep('analyzing');
             const apiStartTime = Date.now();
             // 有本地 OCR 结果时带上 ocrText，后端优先走纯文本模式（省多模态成本）
-            const requestBody: any = {
-                imageBase64: base64Image,
-                language: language,
-                subjectId: resolvedNotebookId || undefined,
-            };
+            // multipart 上传：图片以二进制发送，省去 base64 JSON 的 33% 体积膨胀
+            const form = new FormData();
+            form.append("image", new File([await dataUrlToBlob(base64Image)], "image.jpg", { type: "image/jpeg" }));
+            form.append("language", language);
+            if (resolvedNotebookId) {
+                form.append("subjectId", resolvedNotebookId);
+            }
             if (ocrText && ocrText.trim().length > 0) {
-                requestBody.ocrText = ocrText.trim();
+                form.append("ocrText", ocrText.trim());
                 frontendLogger.info('[HomeAnalyze]', 'Sending with OCR text → 后端走纯文本模式（省 token）', {
                     ocrLen: ocrText.trim().length,
                 });
             }
-            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", requestBody, { timeout: aiTimeout }); // Use configured timeout
+            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", form, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[HomeAnalyze]', 'API response received, validating data', {
                 apiDuration

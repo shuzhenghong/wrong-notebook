@@ -6,7 +6,7 @@ import hashlib
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field
 
 from ...models.user import User
@@ -14,6 +14,7 @@ from ...schemas.base import CamelModel
 from ...utils.dependencies import get_current_user
 from ...utils.image_storage import decode_validated_image, read_image
 from ...utils.rate_limiter import rate_limit
+from ...utils.request_parsing import parse_image_request
 from ...utils.logger import get_logger
 
 logger = get_logger("api:ocr")
@@ -24,11 +25,6 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BASE64_CHARS = int(MAX_IMAGE_BYTES * 4 / 3)
 OCR_RATE_LIMIT = 30
 OCR_RATE_WINDOW_SEC = 60
-
-
-class OcrRequest(CamelModel):
-    key: str | None = Field(default=None, description="落盘图片 key, 如 <userId>/<errorItemId>.jpg")
-    image_base64: str | None = Field(default=None, description="data URL 或裸 base64")
 
 
 class OcrLine(CamelModel):
@@ -180,10 +176,11 @@ def _recognize(buf: bytes, user_id: str) -> OcrResponse:
 
 
 @router.post("", response_model=OcrResponse)
-def ocr(
-    body: OcrRequest,
+async def ocr(
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> OcrResponse:
+    """OCR 识别 — 同时接受 multipart (file 字段 "image", 优先) 与 JSON (imageBase64)."""
     ok, remaining, retry_after = rate_limit(f"ocr:{user.id}", OCR_RATE_LIMIT, OCR_RATE_WINDOW_SEC)
     if not ok:
         raise HTTPException(
@@ -191,28 +188,35 @@ def ocr(
             detail=f"OCR rate limit exceeded. Retry after {int(retry_after)}s.",
         )
 
-    if body.key:
+    parsed = await parse_image_request(request)
+    key = parsed.get("key")
+
+    if key:
         # 落盘图片通路: 归属校验
-        if ".." in body.key or body.key.startswith("/") or "\\" in body.key:
+        if ".." in key or key.startswith("/") or "\\" in key:
             raise HTTPException(status_code=400, detail="Invalid image key")
-        if not body.key.startswith(f"{user.id}/"):
+        if not key.startswith(f"{user.id}/"):
             raise HTTPException(status_code=403, detail="Not authorized to access this image")
-        stored = read_image(body.key)
+        stored = read_image(key)
         if stored is None:
             raise HTTPException(status_code=404, detail="Image not found")
         buf, _mime = stored
-    elif body.image_base64:
-        if len(body.image_base64) > MAX_IMAGE_BASE64_CHARS:
+    elif parsed.image_data_url:
+        # data URL 的 base64 部分 ≈ 原始字节数 * 4/3, 与旧 JSON 通路同一限额口径
+        if len(parsed.image_data_url) > MAX_IMAGE_BASE64_CHARS + 64:
             raise HTTPException(
                 status_code=400,
                 detail=f"Image too large (max {MAX_IMAGE_BYTES // 1024 // 1024}MB)",
             )
-        decoded = decode_validated_image(body.image_base64)
+        decoded = decode_validated_image(parsed.image_data_url)
         if decoded is None:
             raise HTTPException(status_code=400, detail="Invalid image data")
         buf, _mime = decoded
     else:
-        raise HTTPException(status_code=400, detail="Provide either key or imageBase64")
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either key or image (multipart file 'image') / imageBase64",
+        )
 
     logger.info("OCR request userId=%s bytes=%d", user.id, len(buf))
     return _recognize(buf, user.id)

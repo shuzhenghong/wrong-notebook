@@ -6,17 +6,18 @@ import asyncio
 import json
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...models import KnowledgeTag, User
-from ...schemas.ai import AnalyzeRequest, AnalyzeResponse
+from ...models import KnowledgeTag, Subject, User
+from ...schemas.ai import AnalyzeResponse
 from ...services.ai import get_ai_service
 from ...utils.dependencies import get_current_user
 from ...utils.logger import get_logger
 from ...utils.rate_limiter import rate_limit
+from ...utils.request_parsing import parse_image_request
 
 
 router = APIRouter()
@@ -38,29 +39,65 @@ def _check_rate_limit(user_id: str) -> None:
         )
 
 
+async def _resolve_request(request: Request, db: Session) -> tuple[str, str | None, str | None, str | None]:
+    """解析请求 → (image_data_url, subject_name, grade_semester, custom_prompt).
+
+    同时接受:
+      - multipart/form-data: file 字段 "image" + form 字段 (subjectId/subject/ocrText/...)
+      - JSON: imageBase64 / imageDataUrl (data URL 或裸 base64)
+
+    subjectId 是笔记本 (Subject) 的 id, 这里解析成学科名供 AI prompt 使用;
+    解析失败不阻塞分析 (仅丢失学科上下文)。
+
+    注意: 前端还带 ocrText 字段 (本地 OCR 结果, 意图让后端走纯文本省 token),
+    旧 Next.js 后端支持该优化, Python 侧暂未实现 —— 字段被接受但忽略。
+    """
+    parsed = await parse_image_request(request)
+    image_data_url = parsed.image_data_url
+    if not image_data_url or not image_data_url.startswith("data:image/"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "image is required: multipart file field 'image' "
+                "(preferred) or JSON imageBase64/imageDataUrl as data URL"
+            ),
+        )
+
+    subject_name: str | None = None
+    subject_ref = parsed.get("subject", "subjectId", "notebookId")
+    if subject_ref:
+        s = db.get(Subject, subject_ref)
+        if s is not None:
+            subject_name = s.name
+        else:
+            subject_name = subject_ref  # 直接传了学科名而非 id
+    grade_semester = parsed.get("gradeSemester", "grade_semester")
+    custom_prompt = parsed.get("customPrompt", "custom_prompt")
+    return image_data_url, subject_name, grade_semester, custom_prompt
+
+
 # ---------------------------------------------------------------------------
 # 同步版 — POST /api/analyze
 # ---------------------------------------------------------------------------
 
 @router.post("", response_model=AnalyzeResponse)
 async def analyze_image(
-    payload: AnalyzeRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AnalyzeResponse:
-    if not payload.image_data_url.startswith("data:image/"):
-        raise HTTPException(status_code=400, detail="image_data_url must be a data URL")
+    image_data_url, subject, grade_semester, custom_prompt = await _resolve_request(request, db)
 
     _check_rate_limit(user.id)
     ai = get_ai_service()
 
-    logger.info("Analyzing image via %s, subject=%s", ai.name, payload.subject)
+    logger.info("Analyzing image via %s, subject=%s", ai.name, subject)
 
     question = await ai.analyze_image(
-        image_data_url=payload.image_data_url,
-        subject=payload.subject,
-        grade_semester=payload.grade_semester,
-        custom_prompt=payload.custom_prompt,
+        image_data_url=image_data_url,
+        subject=subject,
+        grade_semester=grade_semester,
+        custom_prompt=custom_prompt,
     )
 
     if question.knowledge_tags and payload.subject:
@@ -88,14 +125,15 @@ def _sse(event: str, data: str) -> str:
 
 @router.post("/stream")
 async def analyze_image_stream(
-    payload: AnalyzeRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    """SSE 流式分析 — 先推送 status, 再按段落推送 delta, 最后 done + 完整结果."""
+    """SSE 流式分析 — 先推送 status, 再按段落推送 delta, 最后 done + 完整结果.
 
-    if not payload.image_data_url.startswith("data:image/"):
-        raise HTTPException(status_code=400, detail="image_data_url must be a data URL")
+    请求体解析同 analyze_image (multipart / JSON 双格式).
+    """
+    image_data_url, subject, grade_semester, custom_prompt = await _resolve_request(request, db)
 
     _check_rate_limit(user.id)
 
@@ -109,10 +147,10 @@ async def analyze_image_stream(
 
         try:
             question = await ai.analyze_image(
-                image_data_url=payload.image_data_url,
-                subject=payload.subject,
-                grade_semester=payload.grade_semester,
-                custom_prompt=payload.custom_prompt,
+                image_data_url=image_data_url,
+                subject=subject,
+                grade_semester=grade_semester,
+                custom_prompt=custom_prompt,
             )
         except Exception as e:
             yield _sse("error", json.dumps({"message": str(e)}))

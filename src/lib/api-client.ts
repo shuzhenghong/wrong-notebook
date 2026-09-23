@@ -34,9 +34,15 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
         finalUrl += `?${searchParams.toString()}`;
     }
 
-    const defaultHeaders: HeadersInit = {
-        'Content-Type': 'application/json',
-    };
+    // FormData 上传时不能设置 Content-Type（浏览器需自动生成 multipart boundary），
+    // 也不能 JSON.stringify —— body 直接透传。
+    const isFormData = typeof FormData !== "undefined" && rest.body instanceof FormData;
+
+    const defaultHeaders: HeadersInit = isFormData
+        ? {}
+        : {
+              'Content-Type': 'application/json',
+          };
 
     // 创建 AbortController 用于超时控制
     const controller = new AbortController();
@@ -175,7 +181,14 @@ async function postStream<TResponse>(url: string, body: unknown, callbacks: Stre
 
 export const apiClient = {
     get: <T>(url: string, options?: RequestOptions) => request<T>(url, { ...options, method: 'GET' }),
-    post: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'POST', body: JSON.stringify(body) }),
+    post: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) =>
+        request<TResponse>(url, {
+            ...options,
+            method: 'POST',
+            body: (typeof FormData !== 'undefined' && body instanceof FormData
+                ? (body as unknown as BodyInit)
+                : JSON.stringify(body)) as BodyInit,
+        }),
     postStream: <TResponse, TBody = any>(url: string, body: TBody, callbacks?: StreamCallbacks, options?: RequestOptions) => postStream<TResponse>(url, body, callbacks, options),
     put: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'PUT', body: JSON.stringify(body) }),
     patch: <TResponse, TBody = any>(url: string, body: TBody, options?: RequestOptions) => request<TResponse>(url, { ...options, method: 'PATCH', body: JSON.stringify(body) }),

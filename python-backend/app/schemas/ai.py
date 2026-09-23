@@ -7,15 +7,7 @@ from pydantic.alias_generators import to_camel
 
 
 # ========== 分析请求/响应 ==========
-class AnalyzeRequest(BaseModel):
-    image_data_url: str = Field(..., description="base64 data URL")
-    subject: str | None = None
-    grade_semester: str | None = None
-    custom_prompt: str | None = None
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
-
+# 请求体解析见 utils/request_parsing.py（multipart / JSON 双格式），不再用 pydantic 模型承接
 class AnalyzedQuestion(BaseModel):
     question_text: str
     answer_text: str | None = None

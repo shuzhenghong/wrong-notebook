@@ -74,6 +74,15 @@ export async function compressImage(
 }
 
 /**
+ * data URL → Blob（用于 multipart 上传：
+ * 图片以二进制随 FormData 发送，体积比 base64 JSON 省 ~33%）
+ */
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+    const res = await fetch(dataUrl);
+    return await res.blob();
+}
+
+/**
  * 检查并压缩图片（如果需要）
  * @param file 图片文件
  * @returns Base64 字符串

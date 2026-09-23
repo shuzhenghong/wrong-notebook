@@ -11,7 +11,7 @@ import { apiClient } from "@/lib/api-client";
 import { AnalyzeResponse, Notebook, AppConfig, OcrTextResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { processImageFile } from "@/lib/image-utils";
+import { processImageFile, dataUrlToBlob } from "@/lib/image-utils";
 import { ArrowLeft, Upload, PenLine } from "lucide-react";
 import { ProgressFeedback, ProgressStatus } from "@/components/ui/progress-feedback";
 import { frontendLogger } from "@/lib/frontend-logger";
@@ -124,9 +124,10 @@ export default function AddErrorPage() {
             const base64Image = await processImageFile(file);
 
             setAnalysisStep('analyzing');
-            const data = await apiClient.post<OcrTextResponse>("/api/ocr", {
-                imageBase64: base64Image,
-            }, { timeout: 60000 });
+            // multipart 上传：图片以二进制发送，省去 base64 JSON 的 33% 体积膨胀
+            const form = new FormData();
+            form.append("image", new File([await dataUrlToBlob(base64Image)], "ocr-image.jpg", { type: "image/jpeg" }));
+            const data = await apiClient.post<OcrTextResponse>("/api/ocr", form, { timeout: 60000 });
 
             if (!data || typeof data.text !== 'string' || !data.text.trim()) {
                 frontendLogger.warn('[AddOcr]', 'OCR returned no text');
@@ -172,11 +173,12 @@ export default function AddErrorPage() {
             frontendLogger.info('[AddAnalyze]', 'Step 2/5: Calling API endpoint /api/analyze');
             setAnalysisStep('analyzing');
             const apiStartTime = Date.now();
-            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", {
-                imageBase64: base64Image,
-                language: language,
-                subjectId: notebookId
-            }, { timeout: aiTimeout }); // Use configured timeout
+            // multipart 上传：图片以二进制发送，省去 base64 JSON 的 33% 体积膨胀
+            const form = new FormData();
+            form.append("image", new File([await dataUrlToBlob(base64Image)], "image.jpg", { type: "image/jpeg" }));
+            form.append("language", language);
+            form.append("subjectId", notebookId);
+            const data = await apiClient.post<AnalyzeResponse>("/api/analyze", form, { timeout: aiTimeout }); // Use configured timeout
             const apiDuration = Date.now() - apiStartTime;
             frontendLogger.info('[AddAnalyze]', 'API response received, validating data', {
                 apiDuration
